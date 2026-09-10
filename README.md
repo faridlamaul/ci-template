@@ -13,7 +13,7 @@ Instead of duplicating hundreds of lines of CI/CD YAML across every repository, 
 
 | Workflow | Path | Description |
 |---|---|---|
-| **Semantic Release** | `.github/workflows/semantic-release.yml` | Automated Conventional Commits semver bumping, changelog generation, git tagging, and GitHub Releases via [`go-gitops`](https://github.com/faridlamaul/go-gitops). |
+| **Semantic Release** | `.github/workflows/semantic-release.yml` | Automated Conventional Commits semver bumping, changelog generation, git tagging, and GitHub Releases via [`go-gitops`](https://github.com/faridlamaul/go-gitops) container image from GHCR (zero Go setup required). |
 | **Go CI** | `.github/workflows/go-ci.yml` | Comprehensive Go pipeline: `golangci-lint`, race-detector unit tests with coverage report, and cross-compile build verification. |
 | **Docker Build & Push** | `.github/workflows/docker-build.yml` | Multi-platform (`amd64`, `arm64`) Docker image build using Buildx, automatic semantic tagging, and GHCR publishing with caching. |
 | **Node.js CI** | `.github/workflows/node-ci.yml` | Universal Node.js pipeline supporting `npm`, `pnpm`, `yarn`, and `bun` for linting, testing, and building. |

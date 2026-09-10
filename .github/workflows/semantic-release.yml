@@ -28,6 +28,11 @@ on:
         type: boolean
         default: false
         required: false
+      gitops_image:
+        description: "go-gitops container image from GHCR"
+        type: string
+        default: "ghcr.io/faridlamaul/go-gitops:latest"
+        required: false
     outputs:
       version:
         description: "The newly released semantic version tag"
@@ -55,15 +60,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "stable"
-
-      - name: Install go-gitops
+      - name: Pull go-gitops container image
         run: |
-          go install github.com/faridlamaul/go-gitops/cmd/github@latest
-
+          docker pull ${{ inputs.gitops_image }}
       - name: Run Semantic Release
         id: gitops
         env:
@@ -89,8 +88,14 @@ jobs:
             ARGS="${ARGS} --prerelease"
           fi
 
-          echo "Running: go-gitops ${ARGS}"
-          OUTPUT=$(go-gitops ${ARGS})
+          echo "Running container: ${{ inputs.gitops_image }} ${ARGS}"
+          OUTPUT=$(docker run --rm \
+            -e GITHUB_TOKEN="${GITHUB_TOKEN}" \
+            -e GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            -e GITHUB_SHA="${GITHUB_SHA}" \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace \
+            ${{ inputs.gitops_image }} ${ARGS})
           echo "${OUTPUT}"
 
           NEW_VER=$(echo "${OUTPUT}" | grep '^RELEASE_VERSION=' | cut -d'=' -f2 || true)
