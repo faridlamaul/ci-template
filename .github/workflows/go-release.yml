@@ -1,0 +1,68 @@
+name: Reusable GoReleaser
+
+on:
+  workflow_call:
+    inputs:
+      go_version:
+        description: "Go version to set up"
+        type: string
+        default: "stable"
+        required: false
+      goreleaser_version:
+        description: "GoReleaser version specification"
+        type: string
+        default: "~> v2"
+        required: false
+      distribution:
+        description: "GoReleaser distribution: goreleaser or goreleaser-pro"
+        type: string
+        default: "goreleaser"
+        required: false
+      args:
+        description: "GoReleaser arguments"
+        type: string
+        default: "release --clean"
+        required: false
+      version:
+        description: "Specific git tag to checkout before releasing (optional)"
+        type: string
+        default: ""
+        required: false
+    secrets:
+      token:
+        description: "GitHub token with contents:write permission"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all git tags
+        run: git fetch --tags --force
+
+      - name: Checkout target tag
+        if: inputs.version != ''
+        run: git checkout ${{ inputs.version }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: ${{ inputs.distribution }}
+          version: ${{ inputs.goreleaser_version }}
+          args: ${{ inputs.args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.token || secrets.GITHUB_TOKEN }}

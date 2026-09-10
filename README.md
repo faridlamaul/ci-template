@@ -15,6 +15,7 @@ Instead of duplicating hundreds of lines of CI/CD YAML across every repository, 
 |---|---|---|
 | **Semantic Release** | `.github/workflows/semantic-release.yml` | Automated Conventional Commits semver bumping, changelog generation, git tagging, and GitHub Releases via [`go-gitops`](https://github.com/faridlamaul/go-gitops) container image from GHCR (zero Go setup required). |
 | **Go CI** | `.github/workflows/go-ci.yml` | Comprehensive Go pipeline: `golangci-lint`, race-detector unit tests with coverage report, and cross-compile build verification. |
+| **Go Release** | `.github/workflows/go-release.yml` | Cross-compilation and automated binary artifact packaging and publishing to GitHub Releases via GoReleaser. |
 | **Docker Build & Push** | `.github/workflows/docker-build.yml` | Multi-platform (`amd64`, `arm64`) Docker image build using Buildx, automatic semantic tagging, and GHCR publishing with caching. |
 | **Node.js CI** | `.github/workflows/node-ci.yml` | Universal Node.js pipeline supporting `npm`, `pnpm`, `yarn`, and `bun` for linting, testing, and building. |
 | **Python CI** | `.github/workflows/python-ci.yml` | Python test & lint automation using `ruff` and `pytest` with pip dependency caching. |
@@ -42,6 +43,39 @@ jobs:
     uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@main
     with:
       bump: auto  # auto, major, minor, or patch
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+---
+
+### 1b. Full Pipeline: Semantic Release + GoReleaser Binary Packaging
+Combine SemVer versioning and multi-platform binary compilation in `.github/workflows/release.yml`:
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  semantic:
+    uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@main
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
+
+  binary:
+    needs: semantic
+    if: needs.semantic.outputs.released == 'true'
+    uses: faridlamaul/ci-template/.github/workflows/go-release.yml@main
+    with:
+      version: ${{ needs.semantic.outputs.version }}
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}
 ```
