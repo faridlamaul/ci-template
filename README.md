@@ -50,16 +50,31 @@ jobs:
 ---
 
 ### 1b. Full Pipeline: Semantic Release + GoReleaser Binary Packaging
-Combine SemVer versioning and multi-platform binary compilation in `.github/workflows/release.yml`:
+Combine SemVer versioning and multi-platform binary compilation in `.github/workflows/release.yml`.
+
+#### Manual Trigger (Recommended for deliberate version control):
+Allows selecting version bump type (`patch`, `minor`, `major`) via GitHub Actions UI:
 
 ```yaml
 name: Release
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - auto
+        default: patch
+        required: true
+      dry_run:
+        description: "Dry-run (preview version without creating tag or release)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -67,12 +82,15 @@ permissions:
 jobs:
   semantic:
     uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@main
+    with:
+      bump: ${{ inputs.bump }}
+      dry_run: ${{ inputs.dry_run }}
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}
 
   binary:
     needs: semantic
-    if: needs.semantic.outputs.released == 'true'
+    if: needs.semantic.outputs.released == 'true' && !inputs.dry_run
     uses: faridlamaul/ci-template/.github/workflows/go-release.yml@main
     with:
       version: ${{ needs.semantic.outputs.version }}
@@ -80,6 +98,8 @@ jobs:
       token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+#### Automatic Trigger on Push to Main:
+Replace `on: workflow_dispatch` with `on: push: branches: [main]` to automatically calculate bump and release on every push.
 ---
 
 ### 2. Go CI (Lint, Test, Build)
