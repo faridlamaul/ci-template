@@ -1,0 +1,103 @@
+name: Reusable Semantic Release
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: "Version bump type: auto, major, minor, or patch"
+        type: string
+        default: "auto"
+        required: false
+      version:
+        description: "Explicit version tag override (e.g. v1.0.0)"
+        type: string
+        default: ""
+        required: false
+      dry_run:
+        description: "Preview version bump and release notes without making remote changes"
+        type: boolean
+        default: false
+        required: false
+      draft:
+        description: "Create release as draft"
+        type: boolean
+        default: false
+        required: false
+      prerelease:
+        description: "Create release as prerelease"
+        type: boolean
+        default: false
+        required: false
+    outputs:
+      version:
+        description: "The newly released semantic version tag"
+        value: ${{ jobs.release.outputs.version }}
+      released:
+        description: "True if a new tag/release was published"
+        value: ${{ jobs.release.outputs.released }}
+    secrets:
+      token:
+        description: "GitHub token with contents:write permission"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.gitops.outputs.version }}
+      released: ${{ steps.gitops.outputs.released }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install go-gitops
+        run: |
+          go install github.com/faridlamaul/go-gitops/cmd/github@latest
+
+      - name: Run Semantic Release
+        id: gitops
+        env:
+          GITHUB_TOKEN: ${{ secrets.token || secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          ARGS="tag --repo=${GITHUB_REPOSITORY} --ref=${GITHUB_SHA}"
+          
+          if [ "${{ inputs.bump }}" != "" ]; then
+            ARGS="${ARGS} --bump=${{ inputs.bump }}"
+          fi
+          if [ "${{ inputs.version }}" != "" ]; then
+            ARGS="${ARGS} --version=${{ inputs.version }}"
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="${ARGS} --dry-run"
+          fi
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            ARGS="${ARGS} --draft"
+          fi
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            ARGS="${ARGS} --prerelease"
+          fi
+
+          echo "Running: go-gitops ${ARGS}"
+          OUTPUT=$(go-gitops ${ARGS})
+          echo "${OUTPUT}"
+
+          NEW_VER=$(echo "${OUTPUT}" | grep '^RELEASE_VERSION=' | cut -d'=' -f2 || true)
+          if [ -n "${NEW_VER}" ]; then
+            echo "version=${NEW_VER}" >> $GITHUB_OUTPUT
+            echo "released=true" >> $GITHUB_OUTPUT
+          else
+            echo "version=" >> $GITHUB_OUTPUT
+            echo "released=false" >> $GITHUB_OUTPUT
+          fi

@@ -1,0 +1,80 @@
+name: Reusable Node CI
+
+on:
+  workflow_call:
+    inputs:
+      node_version:
+        description: "Node.js version to set up"
+        type: string
+        default: "20"
+        required: false
+      package_manager:
+        description: "Package manager: npm, pnpm, yarn, or bun"
+        type: string
+        default: "npm"
+        required: false
+      run_lint:
+        description: "Run npm run lint"
+        type: boolean
+        default: true
+        required: false
+      run_tests:
+        description: "Run npm test"
+        type: boolean
+        default: true
+        required: false
+      run_build:
+        description: "Run npm run build"
+        type: boolean
+        default: true
+        required: false
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ inputs.package_manager == 'pnpm' && 'pnpm' || inputs.package_manager == 'yarn' && 'yarn' || 'npm' }}
+
+      - name: Install dependencies
+        run: |
+          if [ "${{ inputs.package_manager }}" = "pnpm" ]; then
+            npx pnpm install --frozen-lockfile
+          elif [ "${{ inputs.package_manager }}" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
+
+      - name: Run linter
+        if: inputs.run_lint
+        run: |
+          if npm run | grep -q "lint"; then
+            npm run lint
+          else
+            echo "No lint script defined in package.json, skipping."
+          fi
+
+      - name: Run tests
+        if: inputs.run_tests
+        run: |
+          if npm run | grep -q "test"; then
+            npm test
+          else
+            echo "No test script defined in package.json, skipping."
+          fi
+
+      - name: Run build
+        if: inputs.run_build
+        run: |
+          if npm run | grep -q "build"; then
+            npm run build
+          else
+            echo "No build script defined in package.json, skipping."
+          fi

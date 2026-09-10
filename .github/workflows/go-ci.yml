@@ -1,0 +1,98 @@
+name: Reusable Go CI
+
+on:
+  workflow_call:
+    inputs:
+      go_version:
+        description: "Go version to set up"
+        type: string
+        default: "1.22"
+        required: false
+      run_lint:
+        description: "Run golangci-lint check"
+        type: boolean
+        default: true
+        required: false
+      run_tests:
+        description: "Run go test suite with race detector and coverage"
+        type: boolean
+        default: true
+        required: false
+      run_build:
+        description: "Run go build validation"
+        type: boolean
+        default: true
+        required: false
+      build_output:
+        description: "Binary output path"
+        type: string
+        default: "bin/app"
+        required: false
+      build_package:
+        description: "Package to build"
+        type: string
+        default: "./..."
+        required: false
+
+jobs:
+  lint:
+    if: inputs.run_lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+        continue-on-error: true
+
+  test:
+    if: inputs.run_tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+          cache: true
+
+      - name: Run tests with race detector and coverage
+        run: |
+          go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+          go tool cover -func=coverage.txt
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage-report
+          path: coverage.txt
+          retention-days: 7
+
+  build:
+    if: inputs.run_build
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+          cache: true
+
+      - name: Verify build compilation
+        run: |
+          CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ${{ inputs.build_output }} ${{ inputs.build_package }}
