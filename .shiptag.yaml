@@ -1,0 +1,3 @@
+# Other repositories call these workflows by tag, so the first release is
+# already a stable API.
+initial_version: 1.0.0

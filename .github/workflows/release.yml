@@ -1,0 +1,28 @@
+name: Release
+
+# Every push to main runs CI, then shiptag derives the next version from the
+# Conventional Commits since the last tag and publishes a GitHub Release.
+# Callers pin a release tag (or its commit SHA), so changes reach them only
+# through a release.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    permissions:
+      contents: write
+    uses: ./.github/workflows/semantic-release.yml
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
