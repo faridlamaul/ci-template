@@ -1,0 +1,12 @@
+version: 2
+
+# Action updates change what callers run, so they use fix(deps) and merging
+# them publishes a patch release. The shiptag and actionlint images are not
+# covered (workflow inputs and run: steps) and are bumped by hand.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: fix(deps)

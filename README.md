@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   release:
-    uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@main
+    uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@v1
     with:
       bump: auto  # auto, major, minor, or patch
     secrets:
@@ -54,7 +54,7 @@ jobs:
 | `dry_run` | `false` | Print the plan and release notes; tag and publish nothing |
 | `draft` | `false` | Create a draft release |
 | `prerelease` | | Prerelease identifier, e.g. `rc` for `vX.Y.Z-rc.N` |
-| `shiptag_image` | `ghcr.io/faridlamaul/shiptag:0` | Image to run; pin a digest for immutable releases |
+| `shiptag_image` | `ghcr.io/faridlamaul/shiptag:0.3.0@sha256:…` | Image to run, pinned by digest |
 
 Outputs: `released` (`true` or `false`) and `version`, the new tag such as `v1.2.3`.
 
@@ -92,7 +92,7 @@ permissions:
 
 jobs:
   semantic:
-    uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@main
+    uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@v1
     with:
       bump: ${{ inputs.bump }}
       dry_run: ${{ inputs.dry_run }}
@@ -102,7 +102,7 @@ jobs:
   binary:
     needs: semantic
     if: needs.semantic.outputs.released == 'true' && !inputs.dry_run
-    uses: faridlamaul/ci-template/.github/workflows/go-release.yml@main
+    uses: faridlamaul/ci-template/.github/workflows/go-release.yml@v1
     with:
       version: ${{ needs.semantic.outputs.version }}
     secrets:
@@ -127,7 +127,7 @@ on:
 
 jobs:
   go-ci:
-    uses: faridlamaul/ci-template/.github/workflows/go-ci.yml@main
+    uses: faridlamaul/ci-template/.github/workflows/go-ci.yml@v1
     with:
       go_version: '1.22'
       run_lint: true
@@ -156,7 +156,7 @@ permissions:
 
 jobs:
   docker:
-    uses: faridlamaul/ci-template/.github/workflows/docker-build.yml@main
+    uses: faridlamaul/ci-template/.github/workflows/docker-build.yml@v1
     with:
       image_name: ghcr.io/${{ github.repository }}
       platforms: linux/amd64,linux/arm64
@@ -176,7 +176,7 @@ on:
 
 jobs:
   node:
-    uses: faridlamaul/ci-template/.github/workflows/node-ci.yml@main
+    uses: faridlamaul/ci-template/.github/workflows/node-ci.yml@v1
     with:
       node_version: '20'
       package_manager: pnpm # or npm, yarn, bun
@@ -195,7 +195,7 @@ on:
 
 jobs:
   python:
-    uses: faridlamaul/ci-template/.github/workflows/python-ci.yml@main
+    uses: faridlamaul/ci-template/.github/workflows/python-ci.yml@v1
     with:
       python_version: '3.11'
       run_lint: true
@@ -209,6 +209,7 @@ jobs:
 - All workflows default to minimal permissions (`contents: read`).
 - Workflows requiring write access (such as `semantic-release` creating git tags) explicitly declare `contents: write`.
 - Works out-of-the-box with standard repository `GITHUB_TOKEN` — no manual Personal Access Tokens (PAT) needed unless triggering downstream workflows.
+- Every action is pinned to a commit SHA and every image to a digest. Merges to `main` are released automatically by shiptag; the examples use `@v1`, and callers that want immutability can pin the release commit SHA with a `# vX.Y.Z` comment, which Dependabot keeps up to date.
 
 ---
 

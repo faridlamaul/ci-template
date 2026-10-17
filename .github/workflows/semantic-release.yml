@@ -31,7 +31,9 @@ on:
       shiptag_image:
         description: "shiptag container image (https://github.com/faridlamaul/shiptag)"
         type: string
-        default: "ghcr.io/faridlamaul/shiptag:0"
+        # Pinned by digest. Dependabot does not read workflow inputs, so bump
+        # the tag and digest by hand when shiptag releases.
+        default: "ghcr.io/faridlamaul/shiptag:0.3.0@sha256:ceb24020c15259f0d39f035edb8c0948ab2342c9cbbb03d4a85b8ee108453464"
         required: false
     outputs:
       version:
@@ -56,7 +58,7 @@ jobs:
       released: ${{ steps.shiptag.outputs.released }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
