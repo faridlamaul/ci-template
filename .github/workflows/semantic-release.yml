@@ -9,7 +9,7 @@ on:
         default: "auto"
         required: false
       version:
-        description: "Explicit version tag override (e.g. v1.0.0)"
+        description: "Explicit version override (e.g. 1.0.0 or v1.0.0)"
         type: string
         default: ""
         required: false
@@ -24,18 +24,18 @@ on:
         default: false
         required: false
       prerelease:
-        description: "Create release as prerelease"
-        type: boolean
-        default: false
-        required: false
-      gitops_image:
-        description: "go-gitops container image from GHCR"
+        description: "Prerelease identifier (e.g. rc creates vX.Y.Z-rc.N); empty for a stable release"
         type: string
-        default: "ghcr.io/faridlamaul/go-gitops:latest"
+        default: ""
+        required: false
+      shiptag_image:
+        description: "shiptag container image (https://github.com/faridlamaul/shiptag)"
+        type: string
+        default: "ghcr.io/faridlamaul/shiptag:0"
         required: false
     outputs:
       version:
-        description: "The newly released semantic version tag"
+        description: "The newly released tag (e.g. v1.2.3); empty when nothing was released"
         value: ${{ jobs.release.outputs.version }}
       released:
         description: "True if a new tag/release was published"
@@ -52,57 +52,50 @@ jobs:
   release:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.gitops.outputs.version }}
-      released: ${{ steps.gitops.outputs.released }}
+      version: ${{ steps.shiptag.outputs.version }}
+      released: ${{ steps.shiptag.outputs.released }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Pull go-gitops container image
-        run: |
-          docker pull ${{ inputs.gitops_image }}
-      - name: Run Semantic Release
-        id: gitops
+      - name: Run shiptag
+        id: shiptag
         env:
           GITHUB_TOKEN: ${{ secrets.token || secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_SHA: ${{ github.sha }}
+          IMAGE: ${{ inputs.shiptag_image }}
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          DRAFT: ${{ inputs.draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          ARGS="tag --repo=${GITHUB_REPOSITORY} --ref=${GITHUB_SHA}"
-          
-          if [ "${{ inputs.bump }}" != "" ]; then
-            ARGS="${ARGS} --bump=${{ inputs.bump }}"
-          fi
-          if [ "${{ inputs.version }}" != "" ]; then
-            ARGS="${ARGS} --version=${{ inputs.version }}"
-          fi
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            ARGS="${ARGS} --dry-run"
-          fi
-          if [ "${{ inputs.draft }}" = "true" ]; then
-            ARGS="${ARGS} --draft"
-          fi
-          if [ "${{ inputs.prerelease }}" = "true" ]; then
-            ARGS="${ARGS} --prerelease"
-          fi
+          set -euo pipefail
+          args=(tag)
+          if [ -n "$BUMP" ]; then args+=(--bump "$BUMP"); fi
+          if [ -n "$VERSION" ]; then args+=(--version "$VERSION"); fi
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          if [ "$DRAFT" = "true" ]; then args+=(--draft); fi
+          if [ -n "$PRERELEASE" ]; then args+=(--prerelease "$PRERELEASE"); fi
 
-          echo "Running container: ${{ inputs.gitops_image }} ${ARGS}"
-          OUTPUT=$(docker run --rm \
-            -e GITHUB_TOKEN="${GITHUB_TOKEN}" \
-            -e GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
-            -e GITHUB_SHA="${GITHUB_SHA}" \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace \
-            ${{ inputs.gitops_image }} ${ARGS})
-          echo "${OUTPUT}"
+          # shiptag detects GitHub Actions from these variables and writes its
+          # outputs (released, version, tag, ...) to the mounted file. A dry run
+          # writes none.
+          docker run --rm \
+            -e GITHUB_ACTIONS -e GITHUB_REPOSITORY -e GITHUB_SHA \
+            -e GITHUB_SERVER_URL -e GITHUB_API_URL -e GITHUB_TOKEN \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            -v "$RUNNER_TEMP:/runner-temp" \
+            "$IMAGE" "${args[@]}" --output-file /runner-temp/shiptag-outputs
 
-          NEW_VER=$(echo "${OUTPUT}" | grep '^RELEASE_VERSION=' | cut -d'=' -f2 || true)
-          if [ -n "${NEW_VER}" ]; then
-            echo "version=${NEW_VER}" >> $GITHUB_OUTPUT
-            echo "released=true" >> $GITHUB_OUTPUT
+          outputs="$RUNNER_TEMP/shiptag-outputs"
+          released="$(sed -n 's/^released=//p' "$outputs" 2>/dev/null || true)"
+          tag="$(sed -n 's/^tag=//p' "$outputs" 2>/dev/null || true)"
+          if [ "$released" = "true" ]; then
+            echo "version=${tag}" >> "$GITHUB_OUTPUT"
+            echo "released=true" >> "$GITHUB_OUTPUT"
           else
-            echo "version=" >> $GITHUB_OUTPUT
-            echo "released=false" >> $GITHUB_OUTPUT
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "released=false" >> "$GITHUB_OUTPUT"
           fi

@@ -13,7 +13,7 @@ Instead of duplicating hundreds of lines of CI/CD YAML across every repository, 
 
 | Workflow | Path | Description |
 |---|---|---|
-| **Semantic Release** | `.github/workflows/semantic-release.yml` | Automated Conventional Commits semver bumping, changelog generation, git tagging, and GitHub Releases via [`go-gitops`](https://github.com/faridlamaul/go-gitops) container image from GHCR (zero Go setup required). |
+| **Semantic Release** | `.github/workflows/semantic-release.yml` | Automated Conventional Commits semver bumping, changelog generation, git tagging, and GitHub Releases via the [`shiptag`](https://github.com/faridlamaul/shiptag) container image from GHCR (zero Go setup required). |
 | **Go CI** | `.github/workflows/go-ci.yml` | Comprehensive Go pipeline: `golangci-lint`, race-detector unit tests with coverage report, and cross-compile build verification. |
 | **Go Release** | `.github/workflows/go-release.yml` | Cross-compilation and automated binary artifact packaging and publishing to GitHub Releases via GoReleaser. |
 | **Docker Build & Push** | `.github/workflows/docker-build.yml` | Multi-platform (`amd64`, `arm64`) Docker image build using Buildx, automatic semantic tagging, and GHCR publishing with caching. |
@@ -46,6 +46,17 @@ jobs:
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+| Input | Default | Description |
+|---|---|---|
+| `bump` | `auto` | `auto`, `major`, `minor`, or `patch` |
+| `version` | | Explicit version, e.g. `1.0.0` |
+| `dry_run` | `false` | Print the plan and release notes; tag and publish nothing |
+| `draft` | `false` | Create a draft release |
+| `prerelease` | | Prerelease identifier, e.g. `rc` for `vX.Y.Z-rc.N` |
+| `shiptag_image` | `ghcr.io/faridlamaul/shiptag:0` | Image to run; pin a digest for immutable releases |
+
+Outputs: `released` (`true` or `false`) and `version`, the new tag such as `v1.2.3`.
 
 ---
 
