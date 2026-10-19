@@ -81,6 +81,8 @@ shipguard report [--format <fmt>]          ->  platform-native report(s)
 
 1. **scan** runs the selected scanners. It keeps each scanner's raw output in `.shipguard/raw/` and writes normalized findings to `.shipguard/findings.json`.
 2. **gate** applies the effective policy (defaults, then `.shipguard.yaml`, then adapter inputs and CLI flags) and exceptions. It writes the Markdown summary and exits with the code in §6.1.
+`shipguard run` runs all three in order, always attempts `report`, and returns the gate's exit code. Adapters call only `run` (§12 A3).
+
 3. **report** detects the platform from env (`GITHUB_ACTIONS`, `GITLAB_CI`, `BITBUCKET_BUILD_NUMBER`) and writes the native format. `--format` overrides the detection.
 
 | Platform | Native output |
@@ -275,7 +277,7 @@ include:
       mode: enforce
       config: .shipguard.yaml
 # Self-managed GitLab:
-#  - remote: https://raw.githubusercontent.com/faridlamaul/shipguard/v1.0.0/adapters/gitlab/scan.yml
+#  - remote: https://gitlab.com/faridlamaul/shipguard/-/raw/1.0.0/templates/scan.yml   (see §12 A2)
 #    integrity: sha256-<published hash>
 #    inputs: { scanners: all, mode: enforce, config: .shipguard.yaml }
 ```
@@ -320,7 +322,7 @@ The docs describe hardening options: pinning the GitHub reference to a commit SH
 - Multi-stage build.
 - Minimal base image pinned by digest.
 - Each scanner binary is verified against the SHA-256 checksum in `versions.env`.
-- Runs as a non-root user.
+- Runs as root inside the container (see §12 A1).
 - Built for `linux/amd64` and `linux/arm64`.
 
 ### 7.2 Release signing
@@ -394,3 +396,34 @@ Breaking any of them requires a major release.
 - Bitbucket custom pipes: https://support.atlassian.com/bitbucket-cloud/docs/write-a-pipe-for-bitbucket-pipelines/
 - Semgrep Rules License: https://semgrep.dev/legal/rules-license
 - Opengrep: https://github.com/opengrep/opengrep
+
+## 12. Amendments (found while writing the implementation plan)
+
+**A1. The image runs as root.**
+- GitLab job images and Bitbucket pipes write into root-owned clone directories, and GitHub Docker steps need workspace access. shiptag runs as root for the same reason.
+- Isolation comes from the container.
+- Replaces the earlier "non-root" requirement in §7.1.
+
+**A2. Rendered GitLab templates.**
+- `adapters/gitlab/` contains a single placeholder `__SHIPGUARD_VERSION__` for the default image tag.
+- At release it is rendered with the version and published to the gitlab.com project.
+- Both the Catalog component and `include: remote` read the rendered file from that project, with the remote URL `https://gitlab.com/faridlamaul/shipguard/-/raw/X.Y.Z/templates/scan.yml`. The two paths therefore get byte-identical content with a correct image tag.
+- The earlier raw.githubusercontent URL could not carry its own version.
+
+**A3. `shipguard run`.**
+- A convenience command that runs scan, gate and report.
+- Adapters call only this command, so they stay free of logic.
+
+**A4. Bitbucket schedules.**
+- Bitbucket exposes no variable for scheduled runs.
+- `SHIPGUARD_EVENT=schedule` (any platform) overrides the detected event, and the Bitbucket docs tell scheduled custom pipelines to set it.
+
+**A5. The GitHub adapters resolve their own version.**
+- **The composite action** uses `ghcr.io/faridlamaul/shipguard:<action_ref>` when its ref is a version tag, and builds the image from its own source when pinned by SHA. Pinning by SHA is therefore exact but slower; the `image` input can point at a digest instead.
+- **The reusable workflow** needs its own SHA to check out `adapters/github`. Learning that SHA is verification item **V7**:
+  - Try the `job.workflow_sha` context.
+  - Fallback: the OIDC `job_workflow_sha` claim, which requires the caller to grant `id-token: write`.
+
+| # | Question | Fallback if it fails |
+|---|---|---|
+| V7 | Can a called reusable workflow read its own commit SHA? | OIDC `job_workflow_sha` claim; callers add `id-token: write` |
