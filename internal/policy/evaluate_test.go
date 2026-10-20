@@ -172,3 +172,19 @@ func TestLicenseDenyBlocks(t *testing.T) {
 		t.Fatal("threshold must also hold")
 	}
 }
+
+func TestEmptyModeFailsClosed(t *testing.T) {
+	cfg := Defaults()
+	cfg.Mode = ""
+	d := Evaluate(res(fnd("s", finding.CategorySecrets, finding.High, false)), cfg, false, evalNow)
+	if d.Result != "fail" || d.ExitCode() != 1 {
+		t.Fatalf("%+v", d)
+	}
+}
+
+func TestZeroDecisionEnforces(t *testing.T) {
+	d := Decision{Blocking: []finding.Finding{fnd("s", finding.CategorySecrets, finding.High, false)}}
+	if d.ExitCode() != 1 {
+		t.Fatalf("exit = %d, want 1", d.ExitCode())
+	}
+}

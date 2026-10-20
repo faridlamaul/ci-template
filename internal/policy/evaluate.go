@@ -19,13 +19,13 @@ type Decision struct {
 	Expired       []Exception // matched a finding but past expiry
 	New, Total    int
 	ScannerErrors []finding.ScannerRun
-	enforce       bool
+	audit         bool
 }
 
 // Evaluate applies thresholds and exceptions to r. On a PR only findings with
 // Status "new" can block. An exception is active until Expires + 24h.
 func Evaluate(r finding.Result, cfg Config, pr bool, now time.Time) Decision {
-	d := Decision{Total: len(r.Findings), enforce: cfg.Mode == "enforce"}
+	d := Decision{Total: len(r.Findings), audit: cfg.Mode == "audit"}
 	for _, s := range r.Scanners {
 		if s.Status == "error" {
 			d.ScannerErrors = append(d.ScannerErrors, s)
@@ -66,7 +66,7 @@ func Evaluate(r finding.Result, cfg Config, pr bool, now time.Time) Decision {
 	switch {
 	case len(d.ScannerErrors) > 0:
 		d.Result = "fail"
-	case !d.enforce:
+	case d.audit:
 		d.Result = "audit"
 	case len(d.Blocking) > 0:
 		d.Result = "fail"
@@ -82,7 +82,7 @@ func (d Decision) ExitCode() int {
 	switch {
 	case len(d.ScannerErrors) > 0:
 		return 2
-	case len(d.Blocking) > 0 && d.enforce:
+	case len(d.Blocking) > 0 && !d.audit:
 		return 1
 	}
 	return 0
