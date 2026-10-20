@@ -36,15 +36,6 @@ func TestUnknownCommandIsError(t *testing.T) {
 	}
 }
 
-func TestStubsExitWithError(t *testing.T) {
-	for _, c := range []string{"report", "run"} {
-		var out, errb bytes.Buffer
-		if code := run([]string{c}, envOf(nil), &out, &errb); code != 2 {
-			t.Errorf("%s: exit = %d, want 2", c, code)
-		}
-	}
-}
-
 func TestFlagEnvPrecedence(t *testing.T) {
 	tests := []struct {
 		name string
@@ -368,5 +359,102 @@ func TestGateStepSummaryAndGitHubOutput(t *testing.T) {
 	o, _ := os.ReadFile(filepath.Join(tmp, "out.txt"))
 	if !strings.Contains(string(o), "result=fail") {
 		t.Errorf("GITHUB_OUTPUT = %q", o)
+	}
+}
+
+func TestBareVarsAllowlist(t *testing.T) {
+	var out, errb bytes.Buffer
+	env := envOf(map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "DIR": "/evil", "FORMAT": "none",
+		"CODE_INSIGHTS": "false", "BITBUCKET_CLONE_DIR": "/bb"})
+	root, g := newRoot(env, &out, &errb)
+	root.SetArgs([]string{"report"})
+	_ = root.Execute()
+	if g.dir != "/bb" {
+		t.Errorf("dir = %q, want /bb: bare DIR must not redirect --dir", g.dir)
+	}
+	if g.format != "" {
+		t.Errorf("format = %q: bare FORMAT must be ignored", g.format)
+	}
+	if g.codeInsights {
+		t.Error("bare CODE_INSIGHTS=false was not applied")
+	}
+}
+
+// blocker is a scanner that returns one blocking finding.
+type blocker struct{}
+
+func (blocker) Name() string               { return "opengrep" }
+func (blocker) Category() finding.Category { return finding.CategorySAST }
+func (blocker) Scan(context.Context, scanner.Target) ([]finding.Finding, error) {
+	return []finding.Finding{{ID: "R1", Scanner: "opengrep", Category: finding.CategorySAST, Severity: finding.High,
+		File: "a.go", Line: 1, Message: "bad", Fingerprint: "fp1"}}, nil
+}
+
+func TestRunAlwaysReports(t *testing.T) {
+	old := buildScanners
+	buildScanners = func(string) []scanner.Scanner { return []scanner.Scanner{blocker{}} }
+	t.Cleanup(func() { buildScanners = old })
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	if code := run([]string{"run", "--dir", dir}, envOf(nil), &out, &errb); code != 1 {
+		t.Fatalf("exit = %d, want 1, stderr = %s", code, errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".shipguard", "shipguard.sarif")); err != nil {
+		t.Errorf("sarif not written after a failing gate: %v", err)
+	}
+}
+
+func TestRunScanErrorExitsTwoAndSkipsReport(t *testing.T) {
+	old := buildScanners
+	buildScanners = func(string) []scanner.Scanner { return []scanner.Scanner{blocker{}} }
+	t.Cleanup(func() { buildScanners = old })
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	if code := run([]string{"run", "--dir", dir, "--scanners", "bogus"}, envOf(nil), &out, &errb); code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "skipping gate and report") {
+		t.Errorf("stderr = %q", errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".shipguard", "shipguard.sarif")); err == nil {
+		t.Error("report written without findings")
+	}
+}
+
+func TestReportCommand(t *testing.T) {
+	dir := t.TempDir()
+	writeGateFixture(t, dir, "push", okRunFixture, nil, "")
+	var out, errb bytes.Buffer
+	if code := run([]string{"report", "--dir", dir}, envOf(nil), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".shipguard", "shipguard.sarif")); err != nil {
+		t.Error(err)
+	}
+	if code := run([]string{"report", "--dir", t.TempDir()}, envOf(nil), &out, &errb); code != 2 {
+		t.Errorf("missing findings: exit = %d, want 2", code)
+	}
+	if code := run([]string{"report", "--dir", dir, "--format", "bogus"}, envOf(nil), &out, &errb); code != 2 {
+		t.Errorf("bad format: exit = %d, want 2", code)
+	}
+	// PR without the base policy fails closed.
+	pr := t.TempDir()
+	writeGateFixture(t, pr, "pr", okRunFixture, nil, "")
+	if code := run([]string{"report", "--dir", pr}, envOf(nil), &out, &errb); code != 2 {
+		t.Errorf("pr without policy: exit = %d, want 2", code)
+	}
+}
+
+func TestReportUploadFailureExitsZero(t *testing.T) {
+	dir := t.TempDir()
+	writeGateFixture(t, dir, "push", okRunFixture, nil, "")
+	env := envOf(map[string]string{"SHIPGUARD_BITBUCKET_PROXY": "none", "SHIPGUARD_BITBUCKET_TOKEN": "tok-123"})
+	var out, errb bytes.Buffer
+	// no repo/commit: Publish fails with ErrUpload
+	if code := run([]string{"report", "--dir", dir, "--format", "bitbucket"}, env, &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	if !strings.HasPrefix(errb.String(), "warning: ") || strings.Contains(errb.String(), "tok-123") {
+		t.Errorf("stderr = %q", errb.String())
 	}
 }

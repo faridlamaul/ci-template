@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,7 +52,14 @@ type globals struct {
 	config   string
 	mode     string
 	scanners string
+
+	format       string
+	codeInsights bool
 }
+
+// bareVars is the allowlist of flags that may be set from a bare (non
+// SHIPGUARD_-prefixed) Bitbucket pipe variable.
+var bareVars = map[string]bool{"scanners": true, "mode": true, "config": true, "code-insights": true}
 
 // run executes the CLI with injected arguments, environment, and writers and
 // returns the process exit code.
@@ -72,7 +80,7 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 // newRoot builds the command tree. Flag values resolve in the order explicit
 // flag, SHIPGUARD_* variable, bare Bitbucket pipe variable, default.
 func newRoot(getenv func(string) string, stdout, stderr io.Writer) (*cobra.Command, *globals) {
-	g := &globals{}
+	g := &globals{codeInsights: true}
 	root := &cobra.Command{
 		Use:           "shipguard",
 		Short:         "Security scanning and policy gate for GitHub, GitLab, and Bitbucket",
@@ -93,8 +101,8 @@ func newRoot(getenv func(string) string, stdout, stderr io.Writer) (*cobra.Comma
 	root.AddCommand(
 		scanCmd(g, getenv, stdout, stderr),
 		gateCmd(g, getenv, stdout),
-		stubCmd("report", "Publish scan results to the CI platform"),
-		stubCmd("run", "Scan, gate, and report in one step"),
+		reportCmd(g, getenv, stderr),
+		runCmd(g, getenv, stdout, stderr),
 		versionCmd(stdout),
 	)
 	return root, g
@@ -110,7 +118,7 @@ func resolveFlags(fs *pflag.FlagSet, g *globals, getenv func(string) string) err
 		}
 		name := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 		val := getenv("SHIPGUARD_" + name)
-		if val == "" && bitbucket {
+		if val == "" && bitbucket && bareVars[f.Name] {
 			val = getenv(name)
 		}
 		if val != "" {
@@ -147,37 +155,41 @@ func scanCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *
 		Short: "Run the configured scanners",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cats, err := scan.ParseCategories(g.scanners)
-			if err != nil {
-				return &exitcode.Err{Code: exitcode.Error, Err: err}
-			}
-			rulesDir := getenv("SHIPGUARD_RULES_DIR")
-			if rulesDir == "" {
-				rulesDir = defaultRulesDir
-			}
-			res, _, err := scan.Run(cmd.Context(), scan.Options{
-				Dir:        g.dir,
-				ConfigPath: g.config,
-				Categories: cats,
-				Ctx:        platform.Detect(getenv),
-				Scanners:   buildScanners(rulesDir),
-				Now:        time.Now,
-				Version:    version,
-				Mode:       g.mode,
-			})
-			if err != nil {
-				return &exitcode.Err{Code: exitcode.Error, Err: err}
-			}
-			for _, r := range res.Scanners {
-				if r.Status == "error" {
-					fmt.Fprintf(stderr, "warning: %s failed: %s\n", r.Name, r.Error)
-				}
-			}
-			_, err = fmt.Fprintf(stdout, "shipguard scan: %d findings, results in %s\n",
-				len(res.Findings), filepath.Join(g.dir, scan.OutDir, "findings.json"))
-			return err
+			return doScan(cmd.Context(), g, getenv, stdout, stderr)
 		},
 	}
+}
+
+func doScan(ctx context.Context, g *globals, getenv func(string) string, stdout, stderr io.Writer) error {
+	cats, err := scan.ParseCategories(g.scanners)
+	if err != nil {
+		return &exitcode.Err{Code: exitcode.Error, Err: err}
+	}
+	rulesDir := getenv("SHIPGUARD_RULES_DIR")
+	if rulesDir == "" {
+		rulesDir = defaultRulesDir
+	}
+	res, _, err := scan.Run(ctx, scan.Options{
+		Dir:        g.dir,
+		ConfigPath: g.config,
+		Categories: cats,
+		Ctx:        platform.Detect(getenv),
+		Scanners:   buildScanners(rulesDir),
+		Now:        time.Now,
+		Version:    version,
+		Mode:       g.mode,
+	})
+	if err != nil {
+		return &exitcode.Err{Code: exitcode.Error, Err: err}
+	}
+	for _, r := range res.Scanners {
+		if r.Status == "error" {
+			fmt.Fprintf(stderr, "warning: %s failed: %s\n", r.Name, r.Error)
+		}
+	}
+	_, err = fmt.Fprintf(stdout, "shipguard scan: %d findings, results in %s\n",
+		len(res.Findings), filepath.Join(g.dir, scan.OutDir, "findings.json"))
+	return err
 }
 
 // now is the clock used by gate; tests replace it.
@@ -195,55 +207,73 @@ func gateCmd(g *globals, getenv func(string) string, stdout io.Writer) *cobra.Co
 		Short: "Apply the policy to the scan results",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			fail := func(err error) error { return &exitcode.Err{Code: exitcode.Error, Err: err} }
-			if g.mode != "" && g.mode != "enforce" && g.mode != "audit" {
-				return fail(fmt.Errorf("--mode must be enforce or audit, got %q", g.mode))
-			}
-			out := filepath.Join(g.dir, scan.OutDir)
-			res, err := finding.ReadResult(filepath.Join(out, "findings.json"))
-			if err != nil {
-				return fail(fmt.Errorf("%w (run `shipguard scan` first)", err))
-			}
-			var pc platform.Context
-			if len(res.Context) > 0 {
-				if err := json.Unmarshal(res.Context, &pc); err != nil {
-					return fail(fmt.Errorf("parse context in findings.json: %w", err))
-				}
-			}
-			pr := pc.Event == platform.EventPR
-			if !scannerRan(res) {
-				return fail(errors.New("no scanner ran: findings.json has no completed scanner run"))
-			}
-			cfg, err := gateConfig(g, out, pr)
-			if err != nil {
-				return fail(err)
-			}
-			if g.mode != "" {
-				cfg.Mode = g.mode
-			}
-			d := policy.Evaluate(res, cfg, pr, now())
-
-			if err := report.WriteOutputs(g.dir, d, getenv); err != nil {
-				return fail(err)
-			}
-			if err := os.WriteFile(filepath.Join(out, "summary.md"), []byte(report.Summary(res, d, 0)), 0o644); err != nil {
-				return fail(fmt.Errorf("write summary: %w", err))
-			}
-			if p := getenv("GITHUB_STEP_SUMMARY"); p != "" {
-				if err := report.AppendStepSummary(p, report.Summary(res, d, stepSummaryLimit)); err != nil {
-					return fail(err)
-				}
-			}
-			if _, err := fmt.Fprint(stdout, report.Summary(res, d, 0)); err != nil {
-				return fail(err)
-			}
-			if code := d.ExitCode(); code != exitcode.Pass {
-				return &exitcode.Err{Code: code, Err: fmt.Errorf("gate %s: %d blocking findings, %d scanner errors",
-					d.Result, len(d.Blocking), len(d.ScannerErrors))}
-			}
-			return nil
+			return doGate(g, getenv, stdout)
 		},
 	}
+}
+
+func fail(err error) error { return &exitcode.Err{Code: exitcode.Error, Err: err} }
+
+// loadDecision reads findings.json and the effective config and evaluates the
+// policy. It fails closed (exit 2) on a missing or unreadable findings file,
+// a run in which no scanner completed, and a missing or invalid config
+// (including a PR without the base-ref policy.yaml).
+func loadDecision(g *globals) (finding.Result, policy.Decision, error) {
+	if g.mode != "" && g.mode != "enforce" && g.mode != "audit" {
+		return finding.Result{}, policy.Decision{}, fail(fmt.Errorf("--mode must be enforce or audit, got %q", g.mode))
+	}
+	out := filepath.Join(g.dir, scan.OutDir)
+	res, err := finding.ReadResult(filepath.Join(out, "findings.json"))
+	if err != nil {
+		return res, policy.Decision{}, fail(fmt.Errorf("%w (run `shipguard scan` first)", err))
+	}
+	var pc platform.Context
+	if len(res.Context) > 0 {
+		if err := json.Unmarshal(res.Context, &pc); err != nil {
+			return res, policy.Decision{}, fail(fmt.Errorf("parse context in findings.json: %w", err))
+		}
+	}
+	pr := pc.Event == platform.EventPR
+	if !scannerRan(res) {
+		return res, policy.Decision{}, fail(errors.New("no scanner ran: findings.json has no completed scanner run"))
+	}
+	cfg, err := gateConfig(g, out, pr)
+	if err != nil {
+		return res, policy.Decision{}, fail(err)
+	}
+	if g.mode != "" {
+		cfg.Mode = g.mode
+	}
+	return res, policy.Evaluate(res, cfg, pr, now()), nil
+}
+
+// doGate applies the policy, writes the summary and CI outputs, and returns an
+// exit-coded error for a failing decision.
+func doGate(g *globals, getenv func(string) string, stdout io.Writer) error {
+	res, d, err := loadDecision(g)
+	if err != nil {
+		return err
+	}
+	out := filepath.Join(g.dir, scan.OutDir)
+	if err := report.WriteOutputs(g.dir, d, getenv); err != nil {
+		return fail(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "summary.md"), []byte(report.Summary(res, d, 0)), 0o644); err != nil {
+		return fail(fmt.Errorf("write summary: %w", err))
+	}
+	if p := getenv("GITHUB_STEP_SUMMARY"); p != "" {
+		if err := report.AppendStepSummary(p, report.Summary(res, d, stepSummaryLimit)); err != nil {
+			return fail(err)
+		}
+	}
+	if _, err := fmt.Fprint(stdout, report.Summary(res, d, 0)); err != nil {
+		return fail(err)
+	}
+	if code := d.ExitCode(); code != exitcode.Pass {
+		return &exitcode.Err{Code: code, Err: fmt.Errorf("gate %s: %d blocking findings, %d scanner errors",
+			d.Result, len(d.Blocking), len(d.ScannerErrors))}
+	}
+	return nil
 }
 
 // scannerRan reports whether any scanner completed or failed; an empty or
@@ -283,15 +313,100 @@ func gateConfig(g *globals, out string, pr bool) (policy.Config, error) {
 	return policy.Load(path)
 }
 
-func stubCmd(use, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
+func addReportFlags(cmd *cobra.Command, g *globals) {
+	cmd.Flags().StringVar(&g.format, "format", "", "report format: sarif, gitlab, bitbucket or none (default: by platform)")
+	cmd.Flags().BoolVar(&g.codeInsights, "code-insights", true, "publish Bitbucket Code Insights (CODE_INSIGHTS=false disables it)")
+}
+
+// reportCmd writes the platform report from .shipguard/findings.json. A
+// config or findings error exits 2; an upload failure is only a warning.
+func reportCmd(g *globals, getenv func(string) string, stderr io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "report",
+		Short: "Publish scan results to the CI platform",
 		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return &exitcode.Err{Code: exitcode.Error, Err: errors.New("not implemented")}
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return doReport(cmd.Context(), g, getenv, stderr)
 		},
 	}
+	addReportFlags(cmd, g)
+	return cmd
+}
+
+func doReport(ctx context.Context, g *globals, getenv func(string) string, stderr io.Writer) error {
+	res, d, err := loadDecision(g)
+	if err != nil {
+		return err
+	}
+	env := getenv
+	if !g.codeInsights {
+		env = func(k string) string {
+			if k == "CODE_INSIGHTS" {
+				return "false"
+			}
+			return getenv(k)
+		}
+	}
+	if err := report.Report(ctx, g.dir, g.format, res, d, env); err != nil {
+		if errors.Is(err, report.ErrUpload) {
+			fmt.Fprintf(stderr, "warning: %s\n", err)
+			return nil
+		}
+		return fail(err)
+	}
+	return nil
+}
+
+// runCmd scans, gates and reports in one process. It returns the gate exit
+// code, or 2 when scan failed, and always attempts the report when findings
+// exist.
+func runCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Scan, gate, and report in one step",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
+			code := exitcode.Pass
+			note := func(err error) {
+				fmt.Fprintf(stderr, "error: %s\n", err)
+				var ee *exitcode.Err
+				c := exitcode.Error
+				if errors.As(err, &ee) {
+					c = ee.Code
+				}
+				code = max(code, c)
+			}
+			scanFailed := false
+			if err := doScan(ctx, g, getenv, stdout, stderr); err != nil {
+				note(err)
+				scanFailed = true
+				code = exitcode.Error
+			}
+			_, statErr := os.Stat(filepath.Join(g.dir, scan.OutDir, "findings.json"))
+			if scanFailed && statErr != nil {
+				fmt.Fprintln(stderr, "warning: no findings.json; skipping gate and report")
+			} else {
+				if err := doGate(g, getenv, stdout); err != nil {
+					note(err)
+				}
+				if err := doReport(ctx, g, getenv, stderr); err != nil {
+					// the gate error, if any, already explained the failure
+					if code == exitcode.Pass {
+						note(err)
+					} else {
+						fmt.Fprintf(stderr, "warning: report: %s\n", err)
+					}
+				}
+			}
+			if code != exitcode.Pass {
+				return &exitcode.Err{Code: code, Err: errors.New("run failed")}
+			}
+			return nil
+		},
+	}
+	addReportFlags(cmd, g)
+	return cmd
 }
 
 func versionCmd(stdout io.Writer) *cobra.Command {
