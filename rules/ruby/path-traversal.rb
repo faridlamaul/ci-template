@@ -13,3 +13,8 @@ def good
   # ok: shipguard.ruby.path-traversal
   File.read("/etc/hostname")
 end
+
+def good_write
+  # ok: shipguard.ruby.path-traversal
+  File.write("/tmp/out.txt", params[:content])
+end

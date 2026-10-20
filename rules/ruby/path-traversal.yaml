@@ -15,14 +15,30 @@ rules:
     pattern-sanitizers:
       - pattern: File.basename(...)
     pattern-sinks:
-      - pattern: File.read(...)
-      - pattern: File.open(...)
-      - pattern: File.write(...)
-      - pattern: File.delete(...)
-      - pattern: File.binread(...)
-      - pattern: IO.read(...)
-      - pattern: send_file(...)
-      - pattern: FileUtils.rm_rf(...)
+      - patterns:
+          - pattern: File.read($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: File.open($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: File.write($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: File.delete($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: File.binread($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: IO.read($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: send_file($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: FileUtils.rm_rf($P)
+          - focus-metavariable: $P
     metadata:
       category: security
       cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"

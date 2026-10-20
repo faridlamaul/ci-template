@@ -12,14 +12,30 @@ rules:
       - pattern: params[...]
       - pattern: params.fetch(...)
     pattern-sinks:
-      - pattern: Net::HTTP.get(...)
-      - pattern: Net::HTTP.get_response(...)
-      - pattern: Net::HTTP.post(...)
-      - pattern: URI.open(...)
-      - pattern: open(...)
-      - pattern: HTTParty.$M(...)
-      - pattern: Faraday.$M(...)
-      - pattern: RestClient.$M(...)
+      - patterns:
+          - pattern: Net::HTTP.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: Net::HTTP.get_response($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: Net::HTTP.post($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: URI.open($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: open($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: HTTParty.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: Faraday.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: RestClient.$M($URL, ...)
+          - focus-metavariable: $URL
     metadata:
       category: security
       cwe: "CWE-918: Server-Side Request Forgery (SSRF)"

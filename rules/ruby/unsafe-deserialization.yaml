@@ -3,19 +3,17 @@ rules:
     languages: [ruby]
     severity: ERROR
     message: >-
-      Marshal.load, YAML.load with an unsafe loader and Oj in object mode can
-      instantiate arbitrary objects and execute code from crafted input. Use
-      JSON.parse, or YAML.safe_load with permitted classes listed explicitly.
+      Marshal.load, YAML.unsafe_load and Oj in object mode can instantiate
+      arbitrary objects and execute code from crafted input. Use JSON.parse, or
+      YAML.safe_load with permitted classes listed explicitly. (YAML.load is
+      safe by default on Ruby 3.1+ with Psych 4 and is not flagged.)
     patterns:
       - pattern-either:
           - pattern: Marshal.load(...)
           - pattern: Marshal.restore(...)
-          - pattern: YAML.load(...)
           - pattern: YAML.unsafe_load(...)
-          - pattern: Psych.load(...)
           - pattern: Psych.unsafe_load(...)
           - pattern: "Oj.load(..., mode: :object, ...)"
-      - pattern-not: "YAML.load($X, safe: true, ...)"
     metadata:
       category: security
       cwe: "CWE-502: Deserialization of Untrusted Data"

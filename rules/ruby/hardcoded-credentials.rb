@@ -11,5 +11,11 @@ def good
   db_password = ENV["DB_PASSWORD"]
   # ok: shipguard.ruby.hardcoded-credentials
   token_header = ""
-  [db_password, token_header]
+  # ok: shipguard.ruby.hardcoded-credentials
+  token_url = "https://auth.example.com/token"
+  # ok: shipguard.ruby.hardcoded-credentials
+  password_prompt = "Enter your password now"
+  # ok: shipguard.ruby.hardcoded-credentials
+  secret_name = "db-credentials"
+  [db_password, token_header, token_url, password_prompt, secret_name]
 end

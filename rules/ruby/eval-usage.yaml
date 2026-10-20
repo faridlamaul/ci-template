@@ -17,6 +17,12 @@ rules:
       - pattern-not: $O.instance_eval("...", ...)
       - pattern-not: $O.class_eval("...", ...)
       - pattern-not: $O.module_eval("...", ...)
+      - pattern-not: instance_eval(&$B)
+      - pattern-not: $O.instance_eval(&$B)
+      - pattern-not: class_eval(&$B)
+      - pattern-not: $O.class_eval(&$B)
+      - pattern-not: module_eval(&$B)
+      - pattern-not: $O.module_eval(&$B)
     metadata:
       category: security
       cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"

@@ -7,7 +7,7 @@ rules:
       network path can impersonate the server. Use OpenSSL::SSL::VERIFY_PEER
       and trust the right CA through ca_file or cert_store.
     pattern-either:
-      - pattern: OpenSSL::SSL::VERIFY_NONE
+      - pattern: "$M(..., verify_mode: OpenSSL::SSL::VERIFY_NONE, ...)"
       - pattern: "$C.verify_mode = OpenSSL::SSL::VERIFY_NONE"
       - pattern: "$M(..., verify_ssl: false, ...)"
       - pattern: "$M(..., ssl: { verify: false }, ...)"

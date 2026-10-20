@@ -4,7 +4,7 @@ def bad(blob, text)
   # ruleid: shipguard.ruby.unsafe-deserialization
   Marshal.load(blob)
   # ruleid: shipguard.ruby.unsafe-deserialization
-  YAML.load(text)
+  YAML.unsafe_load(text)
 end
 
 def good(text)
@@ -12,4 +12,6 @@ def good(text)
   YAML.safe_load(text)
   # ok: shipguard.ruby.unsafe-deserialization
   JSON.parse(text)
+  # ok: shipguard.ruby.unsafe-deserialization
+  YAML.load(File.read("config/app.yml"))
 end

@@ -8,6 +8,8 @@ def bad(data)
   Digest::SHA1.hexdigest(data)
   # ruleid: shipguard.ruby.weak-crypto
   OpenSSL::Cipher.new("RC4")
+  # ruleid: shipguard.ruby.weak-crypto
+  OpenSSL::Cipher.new("DES")
 end
 
 def good(data)
