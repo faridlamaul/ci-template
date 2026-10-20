@@ -1,0 +1,33 @@
+rules:
+  - id: shipguard.python.path-traversal
+    languages: [python]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A value from the HTTP request reaches a file system call without being
+      reduced to a safe name, so "../" sequences can read or write files
+      outside the intended directory. Use os.path.basename (or werkzeug's
+      secure_filename), or resolve the path and verify it stays inside the
+      allowed root.
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.GET.get(...)
+      - pattern: request.POST.get(...)
+      - pattern: request.values.get(...)
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: secure_filename(...)
+    pattern-sinks:
+      - pattern: open(...)
+      - pattern: send_file(...)
+      - pattern: send_from_directory($DIR, $PATH, ...)
+      - pattern: os.remove(...)
+      - pattern: os.unlink(...)
+      - pattern: shutil.rmtree(...)
+    metadata:
+      category: security
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      confidence: MEDIUM

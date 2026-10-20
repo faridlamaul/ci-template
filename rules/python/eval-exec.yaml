@@ -1,0 +1,18 @@
+rules:
+  - id: shipguard.python.eval-exec
+    languages: [python]
+    severity: ERROR
+    message: >-
+      eval, exec and compile-and-run of a non-literal value execute arbitrary
+      Python. Parse data with json.loads or ast.literal_eval, and dispatch
+      behavior through an explicit mapping instead of evaluating strings.
+    patterns:
+      - pattern-either:
+          - pattern: eval($X, ...)
+          - pattern: exec($X, ...)
+      - pattern-not: eval("...", ...)
+      - pattern-not: exec("...", ...)
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      confidence: HIGH

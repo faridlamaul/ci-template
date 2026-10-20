@@ -1,0 +1,18 @@
+rules:
+  - id: shipguard.python.tls-verify-disabled
+    languages: [python]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is turned off, so any attacker on the
+      network path can impersonate the server. Remove verify=False (or the
+      unverified SSL context) and trust the right CA bundle instead.
+    pattern-either:
+      - pattern: requests.$M(..., verify=False, ...)
+      - pattern: httpx.$M(..., verify=False, ...)
+      - pattern: httpx.Client(..., verify=False, ...)
+      - pattern: ssl._create_unverified_context(...)
+      - pattern: ssl._create_default_https_context = ssl._create_unverified_context
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH

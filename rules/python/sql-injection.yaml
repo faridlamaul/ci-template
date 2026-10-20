@@ -1,0 +1,24 @@
+rules:
+  - id: shipguard.python.sql-injection
+    languages: [python]
+    severity: ERROR
+    message: >-
+      The SQL statement is built with string formatting, concatenation or an
+      f-string, which allows SQL injection when any part is attacker
+      controlled. Use parameterized queries: cursor.execute("... WHERE id = %s",
+      (value,)) or the ORM's bound parameters.
+    patterns:
+      - pattern-either:
+          - pattern: $C.execute(f"...", ...)
+          - pattern: $C.execute("...".format(...), ...)
+          - pattern: $C.execute("..." % $X, ...)
+          - pattern: $C.execute($A + $B, ...)
+          - pattern: $C.executemany(f"...", ...)
+          - pattern: $C.executemany("...".format(...), ...)
+          - pattern: $C.executemany("..." % $X, ...)
+          - pattern: $C.executescript(f"...")
+      - pattern-not: $C.execute("..." + "...", ...)
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      confidence: MEDIUM
