@@ -12,7 +12,7 @@ import (
 // Decision is the outcome of evaluating a Result against a Config.
 type Decision struct {
 	Result        string            // "pass" | "fail" | "audit"
-	Blocking      []finding.Finding // above threshold, not suppressed, and (not PR or Status=="new")
+	Blocking      []finding.Finding // above threshold, not suppressed, and (not PR or not "existing")
 	Suppressed    []finding.Finding
 	Expired       []Exception // matched a finding but past expiry
 	New, Total    int
@@ -20,8 +20,10 @@ type Decision struct {
 	audit         bool
 }
 
-// Evaluate applies thresholds and exceptions to r. On a PR only findings with
-// Status "new" can block. An exception is active until Expires + 24h.
+// Evaluate applies thresholds and exceptions to r. On a PR only new findings
+// can block; a finding without a status is treated as new (defence in depth:
+// only an explicit "existing" mark exempts it). An exception is active until
+// Expires + 24h.
 func Evaluate(r finding.Result, cfg Config, pr bool, now time.Time) Decision {
 	d := Decision{Total: len(r.Findings), audit: cfg.Mode == "audit"}
 	for _, s := range r.Scanners {
@@ -31,7 +33,8 @@ func Evaluate(r finding.Result, cfg Config, pr bool, now time.Time) Decision {
 	}
 	expired := map[int]bool{}
 	for _, f := range r.Findings {
-		if f.Status == finding.StatusNew {
+		isNew := f.Status == finding.StatusNew || (pr && f.Status == finding.StatusNone)
+		if isNew {
 			d.New++
 		}
 		active := false
@@ -49,7 +52,7 @@ func Evaluate(r finding.Result, cfg Config, pr bool, now time.Time) Decision {
 			d.Suppressed = append(d.Suppressed, f)
 			continue
 		}
-		if pr && f.Status != finding.StatusNew {
+		if pr && !isNew {
 			continue
 		}
 		if blocks(f, cfg) {

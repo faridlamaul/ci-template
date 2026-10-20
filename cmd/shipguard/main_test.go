@@ -269,6 +269,8 @@ func TestGateExitCodes(t *testing.T) {
 		Message: "bad", Fingerprint: "fp1"}
 	newHigh := high
 	newHigh.Status = finding.StatusNew
+	existingHigh := high
+	existingHigh.Status = finding.StatusExisting
 	okRun := []finding.ScannerRun{{Name: "opengrep", Category: finding.CategorySAST, Status: "ok"}}
 	errRun := []finding.ScannerRun{{Name: "opengrep", Category: finding.CategorySAST, Status: "error", Error: "boom"}}
 	tests := []struct {
@@ -287,7 +289,8 @@ func TestGateExitCodes(t *testing.T) {
 		{"audit mode passes", "push", okRun, []finding.Finding{high}, "mode: audit\n", nil, 0},
 		{"mode flag overrides file", "push", okRun, []finding.Finding{high}, "mode: audit\n", []string{"--mode", "enforce"}, 1},
 		{"bad mode flag", "push", okRun, nil, "", []string{"--mode", "bogus"}, 2},
-		{"pr ignores existing", "pr", okRun, []finding.Finding{high}, "mode: enforce\n", nil, 0},
+		{"pr ignores existing", "pr", okRun, []finding.Finding{existingHigh}, "mode: enforce\n", nil, 0},
+		{"pr blocks unmarked", "pr", okRun, []finding.Finding{high}, "mode: enforce\n", nil, 1},
 		{"pr blocks new", "pr", okRun, []finding.Finding{newHigh}, "mode: enforce\n", nil, 1},
 		{"invalid policy", "push", okRun, nil, "bogus: true\n", nil, 2},
 	}

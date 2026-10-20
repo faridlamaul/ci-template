@@ -72,6 +72,15 @@ func TestEvaluatePRBlocksOnlyNew(t *testing.T) {
 	}
 }
 
+func TestEvaluatePRTreatsUnmarkedAsNew(t *testing.T) {
+	f := fnd("a", finding.CategorySAST, finding.High, false)
+	f.Status = finding.StatusNone
+	d := Evaluate(res(f), Defaults(), true, evalNow)
+	if len(d.Blocking) != 1 || d.New != 1 || d.ExitCode() != 1 {
+		t.Fatalf("PR finding without status must count as new and block: %+v", d)
+	}
+}
+
 func cfgWithException(e Exception) Config {
 	c := Defaults()
 	c.Exceptions = []Exception{e}
