@@ -21,7 +21,16 @@ func Summary(r finding.Result, d policy.Decision, maxBytes int) string {
 		head.WriteString("### ⚠ Policy changed in this PR\n\n")
 		head.WriteString("The policy was modified by this change. Review it before merging.\n\n")
 		if r.PolicyDiff != "" {
-			head.WriteString("````diff\n" + strings.TrimRight(r.PolicyDiff, "\n") + "\n````\n\n")
+			diff, cut := strings.TrimRight(r.PolicyDiff, "\n"), false
+			if len(diff) > maxDiffBytes {
+				diff, cut = cutUTF8(diff, maxDiffBytes), true
+			}
+			fence := strings.Repeat("`", max(3, longestRun(diff, '`')+1))
+			head.WriteString(fence + "diff\n" + diff + "\n" + fence + "\n")
+			if cut {
+				head.WriteString("(diff truncated)\n")
+			}
+			head.WriteString("\n")
 		}
 	}
 	if len(d.ScannerErrors) > 0 {
@@ -90,6 +99,22 @@ func Summary(r finding.Result, d policy.Decision, maxBytes int) string {
 		return build(fit)
 	}
 	return cutUTF8(build(0), maxBytes)
+}
+
+const maxDiffBytes = 4000
+
+// longestRun returns the length of the longest run of c in s.
+func longestRun(s string, c byte) int {
+	best, cur := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			cur++
+			best = max(best, cur)
+		} else {
+			cur = 0
+		}
+	}
+	return best
 }
 
 func moreLine(n int) string {

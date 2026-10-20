@@ -240,6 +240,39 @@ func writeGateFixture(t *testing.T, dir, event string, runs []finding.ScannerRun
 	}
 }
 
+var okRunFixture = []finding.ScannerRun{{Name: "opengrep", Category: finding.CategorySAST, Status: "ok"}}
+
+func TestGateNoScannerRanFailsClosed(t *testing.T) {
+	for name, runs := range map[string][]finding.ScannerRun{
+		"empty":   nil,
+		"skipped": {{Name: "opengrep", Status: "skipped"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeGateFixture(t, dir, "push", runs, nil, "")
+			var out, errb bytes.Buffer
+			if code := run([]string{"gate", "--dir", dir}, envOf(nil), &out, &errb); code != 2 {
+				t.Fatalf("exit = %d, want 2", code)
+			}
+			if !strings.Contains(errb.String(), "no scanner ran") {
+				t.Errorf("stderr = %q", errb.String())
+			}
+		})
+	}
+}
+
+func TestGatePRWithoutPolicyFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	writeGateFixture(t, dir, "pr", okRunFixture, nil, "")
+	if err := os.WriteFile(filepath.Join(dir, ".shipguard.yaml"), []byte("mode: audit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"gate", "--dir", dir}, envOf(nil), &out, &errb); code != 2 {
+		t.Fatalf("exit = %d, want 2, stderr = %s", code, errb.String())
+	}
+}
+
 func TestGateExitCodes(t *testing.T) {
 	high := finding.Finding{ID: "R1", Category: finding.CategorySAST, Severity: finding.High, File: "a.go", Line: 1,
 		Message: "bad", Fingerprint: "fp1"}
@@ -263,8 +296,8 @@ func TestGateExitCodes(t *testing.T) {
 		{"audit mode passes", "push", okRun, []finding.Finding{high}, "mode: audit\n", nil, 0},
 		{"mode flag overrides file", "push", okRun, []finding.Finding{high}, "mode: audit\n", []string{"--mode", "enforce"}, 1},
 		{"bad mode flag", "push", okRun, nil, "", []string{"--mode", "bogus"}, 2},
-		{"pr ignores existing", "pr", okRun, []finding.Finding{high}, "", nil, 0},
-		{"pr blocks new", "pr", okRun, []finding.Finding{newHigh}, "", nil, 1},
+		{"pr ignores existing", "pr", okRun, []finding.Finding{high}, "mode: enforce\n", nil, 0},
+		{"pr blocks new", "pr", okRun, []finding.Finding{newHigh}, "mode: enforce\n", nil, 1},
 		{"invalid policy", "push", okRun, nil, "bogus: true\n", nil, 2},
 	}
 	for _, tt := range tests {
@@ -304,7 +337,7 @@ func TestGateMissingFindingsFailsClosed(t *testing.T) {
 func TestGateFallsBackToRepoConfig(t *testing.T) {
 	dir := t.TempDir()
 	high := finding.Finding{ID: "R1", Category: finding.CategorySAST, Severity: finding.High, File: "a.go", Message: "bad"}
-	writeGateFixture(t, dir, "push", nil, []finding.Finding{high}, "")
+	writeGateFixture(t, dir, "push", okRunFixture, []finding.Finding{high}, "")
 	cfg := filepath.Join(t.TempDir(), "custom.yaml")
 	if err := os.WriteFile(cfg, []byte("mode: audit\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -318,7 +351,7 @@ func TestGateFallsBackToRepoConfig(t *testing.T) {
 func TestGateStepSummaryAndGitHubOutput(t *testing.T) {
 	dir := t.TempDir()
 	high := finding.Finding{ID: "R1", Category: finding.CategorySAST, Severity: finding.High, File: "a.go", Message: "bad"}
-	writeGateFixture(t, dir, "push", nil, []finding.Finding{high}, "")
+	writeGateFixture(t, dir, "push", okRunFixture, []finding.Finding{high}, "")
 	tmp := t.TempDir()
 	env := envOf(map[string]string{
 		"GITHUB_STEP_SUMMARY": filepath.Join(tmp, "step.md"),

@@ -72,6 +72,18 @@ func TestSummaryTruncates(t *testing.T) {
 	if !utf8.ValidString(s) {
 		t.Error("invalid UTF-8")
 	}
+	var more, kept int
+	for _, l := range strings.Split(s, "\n") {
+		if strings.HasPrefix(l, "| ") && strings.Contains(l, "RULE-") {
+			kept++
+		}
+		if _, err := fmt.Sscanf(l, "…and %d more findings in", &more); err == nil {
+			continue
+		}
+	}
+	if more == 0 || kept+more != 5000 {
+		t.Errorf("kept %d + more %d != 5000", kept, more)
+	}
 	if full := Summary(finding.Result{Findings: fs}, d, 0); len(full) <= 10000 || strings.Contains(full, "more findings in") {
 		t.Errorf("maxBytes 0 must not truncate (len %d)", len(full))
 	}
@@ -85,5 +97,13 @@ func TestSummaryTruncatesTinyLimit(t *testing.T) {
 		if len(s) > n || !utf8.ValidString(s) {
 			t.Errorf("max %d: len %d valid %v", n, len(s), utf8.ValidString(s))
 		}
+	}
+}
+
+func TestSummaryPolicyDiffFence(t *testing.T) {
+	r := finding.Result{PolicyChanged: true, PolicyDiff: "+ ```` evil\n" + strings.Repeat("x", 5000)}
+	s := Summary(r, policy.Decision{Result: "pass"}, 0)
+	if !strings.Contains(s, "`````diff") || !strings.Contains(s, "(diff truncated)") {
+		t.Errorf("fence or truncation note missing:\n%.300s", s)
 	}
 }

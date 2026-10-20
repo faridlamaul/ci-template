@@ -204,20 +204,24 @@ func gateCmd(g *globals, getenv func(string) string, stdout io.Writer) *cobra.Co
 			if err != nil {
 				return fail(fmt.Errorf("%w (run `shipguard scan` first)", err))
 			}
-			cfg, err := gateConfig(g, out)
-			if err != nil {
-				return fail(err)
-			}
-			if g.mode != "" {
-				cfg.Mode = g.mode
-			}
 			var pc platform.Context
 			if len(res.Context) > 0 {
 				if err := json.Unmarshal(res.Context, &pc); err != nil {
 					return fail(fmt.Errorf("parse context in findings.json: %w", err))
 				}
 			}
-			d := policy.Evaluate(res, cfg, pc.Event == platform.EventPR, now())
+			pr := pc.Event == platform.EventPR
+			if !scannerRan(res) {
+				return fail(errors.New("no scanner ran: findings.json has no completed scanner run"))
+			}
+			cfg, err := gateConfig(g, out, pr)
+			if err != nil {
+				return fail(err)
+			}
+			if g.mode != "" {
+				cfg.Mode = g.mode
+			}
+			d := policy.Evaluate(res, cfg, pr, now())
 
 			if err := report.WriteOutputs(g.dir, d, getenv); err != nil {
 				return fail(err)
@@ -242,9 +246,20 @@ func gateCmd(g *globals, getenv func(string) string, stdout io.Writer) *cobra.Co
 	}
 }
 
+// scannerRan reports whether any scanner completed or failed; an empty or
+// skipped-only list means nothing was scanned, which is never a pass.
+func scannerRan(r finding.Result) bool {
+	for _, s := range r.Scanners {
+		if s.Status == "ok" || s.Status == "error" {
+			return true
+		}
+	}
+	return false
+}
+
 // gateConfig reads the effective config written by scan, falling back to the
 // repository config when scan did not write one.
-func gateConfig(g *globals, out string) (policy.Config, error) {
+func gateConfig(g *globals, out string, pr bool) (policy.Config, error) {
 	data, err := os.ReadFile(filepath.Join(out, "policy.yaml"))
 	switch {
 	case err == nil:
@@ -255,6 +270,11 @@ func gateConfig(g *globals, out string) (policy.Config, error) {
 		return cfg, nil
 	case !errors.Is(err, os.ErrNotExist):
 		return policy.Config{}, fmt.Errorf("read policy.yaml: %w", err)
+	}
+	if pr {
+		// The head .shipguard.yaml is attacker-controlled on a PR; only the
+		// base-ref policy that scan wrote may be used.
+		return policy.Config{}, errors.New("policy.yaml missing on a PR: run `shipguard scan` first (the head config is not trusted)")
 	}
 	path := g.config
 	if path == "" {
