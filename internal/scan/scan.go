@@ -1,0 +1,399 @@
+// Package scan runs the configured scanners against the repository and, on a
+// PR/MR, against the base ref to mark each finding new or existing.
+package scan
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/faridlamaul/shipguard/internal/finding"
+	"github.com/faridlamaul/shipguard/internal/gitx"
+	"github.com/faridlamaul/shipguard/internal/platform"
+	"github.com/faridlamaul/shipguard/internal/policy"
+	"github.com/faridlamaul/shipguard/internal/scanner"
+)
+
+// Paths inside the repository.
+const (
+	OutDir        = ".shipguard"       // results: findings.json, policy.yaml, raw/
+	CacheDir      = ".shipguard-cache" // scanner DB cache
+	DefaultConfig = ".shipguard.yaml"
+	SchemaVersion = 1
+)
+
+// AlwaysExclude lists the paths never scanned, whatever the config says.
+var AlwaysExclude = []string{".shipguard/", ".shipguard-cache/", ".shipguard-action/", ".git/", "node_modules/"}
+
+// defaultsYAML is written to policy.yaml when the repository has no config;
+// policy.Parse turns it into policy.Defaults().
+const defaultsYAML = "# No .shipguard.yaml at this revision: built-in defaults apply.\nversion: 1\n"
+
+var allCategories = []finding.Category{finding.CategorySecrets, finding.CategorySAST, finding.CategorySCA, finding.CategoryIaC}
+
+// Options configures Run.
+type Options struct {
+	Dir        string // repository root
+	ConfigPath string // relative to Dir (default .shipguard.yaml)
+	Categories []finding.Category
+	Ctx        platform.Context
+	Scanners   []scanner.Scanner
+	Now        func() time.Time
+	Version    string // shipguard version recorded in findings.json
+	Mode       string // --mode override: "", enforce or audit
+}
+
+// ParseCategories parses the --scanners value: empty or "all", or a comma
+// list of secrets, sast, sca and iac.
+func ParseCategories(s string) ([]finding.Category, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "all" {
+		return slices.Clone(allCategories), nil
+	}
+	var out []finding.Category
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		c := finding.Category(p)
+		if !slices.Contains(allCategories, c) {
+			return nil, fmt.Errorf("%w: --scanners: unknown scanner %q (want all or a comma list of secrets, sast, sca, iac)", policy.ErrConfig, p)
+		}
+		if !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%w: --scanners: empty scanner list", policy.ErrConfig)
+	}
+	return out, nil
+}
+
+// headResult is one scanner's outcome on the head tree.
+type headResult struct {
+	s        scanner.Scanner
+	run      finding.ScannerRun
+	findings []finding.Finding
+}
+
+// Run loads the effective config, runs the selected scanners and writes
+// .shipguard/findings.json, .shipguard/policy.yaml and .shipguard/raw/. Scanner
+// failures are recorded in the result; the error return is reserved for
+// config, base-resolution and output errors.
+func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) {
+	if o.Mode != "" && o.Mode != "enforce" && o.Mode != "audit" {
+		return finding.Result{}, policy.Config{}, fmt.Errorf("%w: --mode must be enforce or audit, got %q", policy.ErrConfig, o.Mode)
+	}
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
+	pr := o.Ctx.Event == platform.EventPR
+
+	var baseSHA string
+	if pr {
+		if o.Ctx.Platform == "bitbucket" {
+			shallow, err := gitx.IsShallow(o.Dir)
+			if err != nil {
+				return finding.Result{}, policy.Config{}, err
+			}
+			if shallow {
+				if err := gitx.Unshallow(o.Dir); err != nil {
+					return finding.Result{}, policy.Config{}, err
+				}
+			}
+		}
+		var err error
+		if baseSHA, err = gitx.ResolveRef(o.Dir, o.Ctx.BaseRef); err != nil {
+			return finding.Result{}, policy.Config{}, err
+		}
+	}
+
+	ec, err := effectiveConfig(o.Dir, o.ConfigPath, baseSHA, o.Mode)
+	if err != nil {
+		return finding.Result{}, policy.Config{}, err
+	}
+	cfg := ec.cfg
+
+	out := filepath.Join(o.Dir, OutDir)
+	rawDir := filepath.Join(out, "raw")
+	if err := os.MkdirAll(rawDir, 0o755); err != nil {
+		return finding.Result{}, policy.Config{}, fmt.Errorf("create output dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "policy.yaml"), ec.bytes, 0o644); err != nil {
+		return finding.Result{}, policy.Config{}, fmt.Errorf("write effective policy: %w", err)
+	}
+
+	exclude := append(slices.Clone(cfg.Paths.Exclude), AlwaysExclude...)
+	head := scanner.Target{
+		Dir:          o.Dir,
+		RawDir:       rawDir,
+		CacheDir:     filepath.Join(o.Dir, CacheDir),
+		Exclude:      exclude,
+		Timeout:      cfg.Timeouts.PerScanner,
+		Rules:        cfg.Scanners.SAST.Rules,
+		DisableRules: cfg.Scanners.SAST.DisableRules,
+		DenyLicenses: cfg.Scanners.SCA.Licenses.Deny,
+	}
+
+	var results []headResult
+	for _, s := range o.Scanners {
+		cat := s.Category()
+		if !slices.Contains(o.Categories, cat) {
+			continue
+		}
+		hr := headResult{s: s, run: finding.ScannerRun{Name: s.Name(), Category: cat}}
+		if !enabled(cfg, cat) {
+			hr.run.Status = "skipped"
+			results = append(results, hr)
+			continue
+		}
+		t := head
+		if cat == finding.CategorySecrets {
+			switch {
+			case pr:
+				t.LogOpts = baseSHA + "..HEAD"
+			case o.Ctx.Event == platform.EventSchedule:
+				t.FullHistory = true
+			}
+		}
+		start := now()
+		fs, err := s.Scan(ctx, t)
+		hr.run.DurationMS = now().Sub(start).Milliseconds()
+		if err != nil {
+			hr.run.Status, hr.run.Error = "error", err.Error()
+		} else {
+			hr.run.Status, hr.findings = "ok", fs
+		}
+		status := finding.StatusNone
+		if pr {
+			status = finding.StatusNew
+		}
+		for i := range hr.findings {
+			hr.findings[i].Status = status
+		}
+		results = append(results, hr)
+	}
+
+	if pr {
+		if err := markExisting(ctx, o.Dir, baseSHA, head, results, now); err != nil {
+			return finding.Result{}, policy.Config{}, err
+		}
+	}
+
+	res := finding.Result{
+		SchemaVersion:    SchemaVersion,
+		ShipguardVersion: o.Version,
+		Scanners:         []finding.ScannerRun{},
+		PolicyChanged:    ec.changed,
+		PolicyDiff:       ec.diff,
+	}
+	if res.Context, err = json.Marshal(o.Ctx); err != nil {
+		return finding.Result{}, policy.Config{}, fmt.Errorf("encode context: %w", err)
+	}
+	var all []finding.Finding
+	for _, hr := range results {
+		res.Scanners = append(res.Scanners, hr.run)
+		all = append(all, hr.findings...)
+	}
+	res.Findings = finding.FilterPaths(all, exclude)
+	if err := finding.WriteResult(filepath.Join(out, "findings.json"), res); err != nil {
+		return finding.Result{}, policy.Config{}, err
+	}
+	return res, cfg, nil
+}
+
+// markExisting scans the base revision in a worktree with every head scanner
+// that succeeded (except secrets, whose log range is already PR-only) and
+// marks head findings whose fingerprint the base also has as existing. A base
+// failure turns the head run into an error and leaves its findings new.
+func markExisting(ctx context.Context, dir, baseSHA string, head scanner.Target, results []headResult, now func() time.Time) error {
+	baseRaw, err := os.MkdirTemp("", "shipguard-base-raw-*")
+	if err != nil {
+		return fmt.Errorf("create base raw dir: %w", err)
+	}
+	defer os.RemoveAll(baseRaw)
+
+	var wt string
+	var wtErr error
+	cleanup := func() {}
+	defer func() { cleanup() }()
+
+	for i := range results {
+		hr := &results[i]
+		if hr.run.Status != "ok" || hr.run.Category == finding.CategorySecrets || len(hr.findings) == 0 {
+			continue
+		}
+		if wt == "" && wtErr == nil {
+			var c func()
+			if wt, c, wtErr = gitx.Worktree(dir, baseSHA); wtErr == nil {
+				cleanup = c
+			}
+		}
+		if wtErr != nil {
+			hr.run.Status, hr.run.Error = "error", "base scan failed: "+wtErr.Error()
+			continue
+		}
+		t := head
+		t.Dir, t.RawDir = wt, baseRaw
+		start := now()
+		base, err := hr.s.Scan(ctx, t)
+		hr.run.DurationMS += now().Sub(start).Milliseconds()
+		if err != nil {
+			hr.run.Status, hr.run.Error = "error", "base scan failed: "+err.Error()
+			continue
+		}
+		seen := make(map[string]bool, len(base))
+		for _, f := range base {
+			seen[f.Fingerprint] = true
+		}
+		for j := range hr.findings {
+			if seen[hr.findings[j].Fingerprint] {
+				hr.findings[j].Status = finding.StatusExisting
+			}
+		}
+	}
+	return nil
+}
+
+func enabled(cfg policy.Config, c finding.Category) bool {
+	switch c {
+	case finding.CategorySecrets:
+		return cfg.Scanners.Secrets.Enabled
+	case finding.CategorySAST:
+		return cfg.Scanners.SAST.Enabled
+	case finding.CategorySCA:
+		return cfg.Scanners.SCA.Enabled
+	case finding.CategoryIaC:
+		return cfg.Scanners.IaC.Enabled
+	}
+	return false
+}
+
+// effective is the config the gate will use, with the bytes written to
+// .shipguard/policy.yaml (cfg is parsed from exactly those bytes).
+type effective struct {
+	cfg     policy.Config
+	bytes   []byte
+	changed bool
+	diff    string
+}
+
+// effectiveConfig picks the base revision's config on a PR (baseSHA != "")
+// and the working tree's otherwise, applies the mode override, and parses it.
+func effectiveConfig(dir, configPath, baseSHA, mode string) (effective, error) {
+	var e effective
+	rel, err := configRel(dir, configPath)
+	if err != nil {
+		return e, err
+	}
+	headBytes, headOK, err := readFile(filepath.Join(dir, rel))
+	if err != nil {
+		return e, err
+	}
+	data, ok, source := headBytes, headOK, rel
+	if baseSHA != "" {
+		slash := filepath.ToSlash(rel)
+		baseBytes, baseOK, err := gitx.Show(dir, baseSHA, slash)
+		if err != nil {
+			return e, fmt.Errorf("read base config: %w", err)
+		}
+		data, ok, source = baseBytes, baseOK, rel+" at base "+baseSHA
+		if headOK != baseOK || !bytes.Equal(headBytes, baseBytes) {
+			e.changed = true
+			if e.diff, err = gitx.Diff(dir, baseSHA, "HEAD", slash); err != nil {
+				return e, err
+			}
+		}
+	}
+	if !ok {
+		data = []byte(defaultsYAML)
+	}
+	if mode != "" {
+		if data, err = setMode(data, mode); err != nil {
+			return e, fmt.Errorf("%s: %w", source, err)
+		}
+	}
+	if e.cfg, err = policy.Parse(data); err != nil {
+		return e, fmt.Errorf("%s: %w", source, err)
+	}
+	e.bytes = data
+	return e, nil
+}
+
+// configRel returns the config path relative to the repository root.
+func configRel(dir, p string) (string, error) {
+	if p == "" {
+		p = DefaultConfig
+	}
+	if filepath.IsAbs(p) {
+		r, err := filepath.Rel(dir, p)
+		if err != nil {
+			return "", fmt.Errorf("%w: config %s: %v", policy.ErrConfig, p, err)
+		}
+		p = r
+	}
+	p = filepath.Clean(p)
+	if p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%w: config %s must be inside the repository", policy.ErrConfig, p)
+	}
+	return p, nil
+}
+
+func readFile(path string) ([]byte, bool, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read config: %w", err)
+	}
+	return b, true, nil
+}
+
+// setMode sets the top-level mode key of a YAML config document.
+func setMode(data []byte, mode string) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("%w: %v", policy.ErrConfig, err)
+	}
+	if len(doc.Content) == 0 {
+		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("%w: config must be a mapping", policy.ErrConfig)
+	}
+	val := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: mode}
+	set := false
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "mode" {
+			root.Content[i+1] = val
+			set = true
+		}
+	}
+	if !set {
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "mode"}, val)
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, fmt.Errorf("encode config: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("encode config: %w", err)
+	}
+	return buf.Bytes(), nil
+}

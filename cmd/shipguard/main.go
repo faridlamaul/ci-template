@@ -7,15 +7,35 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/faridlamaul/shipguard/internal/exitcode"
+	"github.com/faridlamaul/shipguard/internal/platform"
+	"github.com/faridlamaul/shipguard/internal/scan"
+	"github.com/faridlamaul/shipguard/internal/scanner"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 // version is set at build time with -ldflags "-X main.version=…".
 var version = "dev"
+
+// defaultRulesDir holds the opengrep builtin rules in the release image.
+const defaultRulesDir = "/opt/shipguard/rules"
+
+// buildScanners returns the real scanners; tests replace it.
+var buildScanners = func(rulesDir string) []scanner.Scanner {
+	run := scanner.ExecRunner()
+	return []scanner.Scanner{
+		scanner.NewGitleaks(run),
+		scanner.NewOpengrep(run, rulesDir),
+		scanner.NewOSV(run),
+		scanner.NewTrivyConfig(run),
+		scanner.NewTrivyLicense(run),
+	}
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
@@ -67,7 +87,7 @@ func newRoot(getenv func(string) string, stdout, stderr io.Writer) (*cobra.Comma
 	pf.StringVar(&g.scanners, "scanners", "", "comma-separated scanners to run")
 
 	root.AddCommand(
-		stubCmd("scan", "Run the configured scanners"),
+		scanCmd(g, getenv, stdout, stderr),
 		stubCmd("gate", "Apply the policy to the scan results"),
 		stubCmd("report", "Publish scan results to the CI platform"),
 		stubCmd("run", "Scan, gate, and report in one step"),
@@ -112,6 +132,48 @@ func resolveFlags(fs *pflag.FlagSet, g *globals, getenv func(string) string) err
 		g.dir = wd
 	}
 	return nil
+}
+
+// scanCmd runs the scanners and writes .shipguard/. It exits 2 on config or
+// base-resolution errors and 0 otherwise: scanner errors are recorded in
+// findings.json and the gate turns them into a failure.
+func scanCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "scan",
+		Short: "Run the configured scanners",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cats, err := scan.ParseCategories(g.scanners)
+			if err != nil {
+				return &exitcode.Err{Code: exitcode.Error, Err: err}
+			}
+			rulesDir := getenv("SHIPGUARD_RULES_DIR")
+			if rulesDir == "" {
+				rulesDir = defaultRulesDir
+			}
+			res, _, err := scan.Run(cmd.Context(), scan.Options{
+				Dir:        g.dir,
+				ConfigPath: g.config,
+				Categories: cats,
+				Ctx:        platform.Detect(getenv),
+				Scanners:   buildScanners(rulesDir),
+				Now:        time.Now,
+				Version:    version,
+				Mode:       g.mode,
+			})
+			if err != nil {
+				return &exitcode.Err{Code: exitcode.Error, Err: err}
+			}
+			for _, r := range res.Scanners {
+				if r.Status == "error" {
+					fmt.Fprintf(stderr, "warning: %s failed: %s\n", r.Name, r.Error)
+				}
+			}
+			_, err = fmt.Fprintf(stdout, "shipguard scan: %d findings, results in %s\n",
+				len(res.Findings), filepath.Join(g.dir, scan.OutDir, "findings.json"))
+			return err
+		},
+	}
 }
 
 func stubCmd(use, short string) *cobra.Command {

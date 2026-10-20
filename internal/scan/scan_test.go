@@ -1,0 +1,541 @@
+package scan
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/faridlamaul/shipguard/internal/finding"
+	"github.com/faridlamaul/shipguard/internal/platform"
+	"github.com/faridlamaul/shipguard/internal/policy"
+	"github.com/faridlamaul/shipguard/internal/scanner"
+	"github.com/faridlamaul/shipguard/internal/testutil/gitfixture"
+	"github.com/santhosh-tekuri/jsonschema/v6"
+)
+
+// fake is a Scanner that returns canned results for the head directory and
+// for any other directory (the base worktree), and records every Target.
+type fake struct {
+	name    string
+	cat     finding.Category
+	headDir string
+	head    []finding.Finding
+	base    []finding.Finding
+	headErr error
+	baseErr error
+	targets []scanner.Target
+}
+
+func (f *fake) Name() string               { return f.name }
+func (f *fake) Category() finding.Category { return f.cat }
+func (f *fake) Scan(_ context.Context, t scanner.Target) ([]finding.Finding, error) {
+	f.targets = append(f.targets, t)
+	if t.Dir == f.headDir {
+		return slices.Clone(f.head), f.headErr
+	}
+	return slices.Clone(f.base), f.baseErr
+}
+
+func (f *fake) baseTargets() []scanner.Target {
+	var out []scanner.Target
+	for _, t := range f.targets {
+		if t.Dir != f.headDir {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func fnd(scannerName string, cat finding.Category, id, file string) finding.Finding {
+	return finding.Finding{
+		ID: id, Scanner: scannerName, Category: cat, Severity: finding.High, File: file, Message: "m",
+		Fingerprint: finding.Fingerprint(id, file, ""),
+	}
+}
+
+func isolate(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+// commitFile writes content to path in r and commits it; empty content deletes it.
+func commitFile(r *gitfixture.Repo, path, content string) string {
+	r.T.Helper()
+	p := filepath.Join(r.Dir, path)
+	if content == "" {
+		r.Git("rm", "-q", "--", path)
+	} else {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			r.T.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			r.T.Fatal(err)
+		}
+		r.Git("add", "--", path)
+	}
+	r.Git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "edit "+path)
+	return r.Git("rev-parse", "HEAD")
+}
+
+// prRepo builds main (base) and a checked-out feature branch (head). baseCfg
+// and headCfg are the .shipguard.yaml contents ("" = absent).
+func prRepo(t *testing.T, baseCfg, headCfg string) (r *gitfixture.Repo, baseSHA string) {
+	t.Helper()
+	isolate(t)
+	r = gitfixture.New(t)
+	baseSHA = r.Commit("base", "src/a.go")
+	if baseCfg != "" {
+		baseSHA = commitFile(r, ".shipguard.yaml", baseCfg)
+	}
+	r.Git("checkout", "-q", "-b", "feature")
+	r.Commit("head", "src/b.go")
+	if headCfg != baseCfg {
+		commitFile(r, ".shipguard.yaml", headCfg)
+	}
+	return r, baseSHA
+}
+
+func prCtx() platform.Context {
+	return platform.Context{Platform: "github", Event: platform.EventPR, BaseRef: "main"}
+}
+
+func allCats() []finding.Category {
+	return []finding.Category{finding.CategorySecrets, finding.CategorySAST, finding.CategorySCA, finding.CategoryIaC}
+}
+
+func fixedNow() time.Time { return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC) }
+
+func runScan(t *testing.T, o Options) (finding.Result, policy.Config) {
+	t.Helper()
+	if o.Categories == nil {
+		o.Categories = allCats()
+	}
+	if o.Now == nil {
+		o.Now = fixedNow
+	}
+	res, cfg, err := Run(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return res, cfg
+}
+
+func runOf(t *testing.T, res finding.Result, name string) finding.ScannerRun {
+	t.Helper()
+	for _, r := range res.Scanners {
+		if r.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("no ScannerRun %q in %+v", name, res.Scanners)
+	return finding.ScannerRun{}
+}
+
+func statusOf(t *testing.T, res finding.Result, id string) finding.Status {
+	t.Helper()
+	for _, f := range res.Findings {
+		if f.ID == id {
+			return f.Status
+		}
+	}
+	t.Fatalf("finding %q not in result", id)
+	return ""
+}
+
+func assertNoEmptyStatus(t *testing.T, res finding.Result) {
+	t.Helper()
+	for _, f := range res.Findings {
+		if f.Status != finding.StatusNew && f.Status != finding.StatusExisting {
+			t.Errorf("finding %s has status %q on a PR; want new or existing", f.ID, f.Status)
+		}
+	}
+}
+
+func TestScanPRMarksNewAndExisting(t *testing.T) {
+	r, baseSHA := prRepo(t, "", "")
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir,
+		head: []finding.Finding{fnd("opengrep", finding.CategorySAST, "old", "src/a.go"), fnd("opengrep", finding.CategorySAST, "fresh", "src/b.go")},
+		base: []finding.Finding{fnd("opengrep", finding.CategorySAST, "old", "src/a.go")}}
+	sca := &fake{name: "osv-scanner", cat: finding.CategorySCA, headDir: r.Dir,
+		head: []finding.Finding{fnd("osv-scanner", finding.CategorySCA, "cve", "go.mod")},
+		base: []finding.Finding{fnd("osv-scanner", finding.CategorySCA, "cve", "go.mod")}}
+	secrets := &fake{name: "gitleaks", cat: finding.CategorySecrets, headDir: r.Dir,
+		head: []finding.Finding{fnd("gitleaks", finding.CategorySecrets, "leak", "src/a.go")},
+		base: []finding.Finding{fnd("gitleaks", finding.CategorySecrets, "leak", "src/a.go")}}
+
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: prCtx(), Scanners: []scanner.Scanner{secrets, sast, sca}})
+
+	if got := statusOf(t, res, "old"); got != finding.StatusExisting {
+		t.Errorf("old: %q, want existing", got)
+	}
+	if got := statusOf(t, res, "fresh"); got != finding.StatusNew {
+		t.Errorf("fresh: %q, want new", got)
+	}
+	if got := statusOf(t, res, "cve"); got != finding.StatusExisting {
+		t.Errorf("cve: %q, want existing", got)
+	}
+	if got := statusOf(t, res, "leak"); got != finding.StatusNew {
+		t.Errorf("leak: %q, want new (secrets are always new on a PR)", got)
+	}
+	assertNoEmptyStatus(t, res)
+	validFindingsJSON(t, r.Dir)
+
+	if len(secrets.targets) != 1 || secrets.targets[0].LogOpts != baseSHA+"..HEAD" {
+		t.Errorf("secrets targets = %+v, want one head scan with LogOpts %s..HEAD", secrets.targets, baseSHA)
+	}
+	bt := sast.baseTargets()
+	if len(bt) != 1 {
+		t.Fatalf("sast base scans = %d, want 1", len(bt))
+	}
+	headRaw := filepath.Join(r.Dir, ".shipguard", "raw")
+	if bt[0].RawDir == headRaw || bt[0].RawDir == "" {
+		t.Errorf("base RawDir = %q, must be a separate temp dir", bt[0].RawDir)
+	}
+	if _, err := os.Stat(bt[0].Dir); !os.IsNotExist(err) {
+		t.Errorf("base worktree %s not cleaned up: %v", bt[0].Dir, err)
+	}
+	if _, err := os.Stat(bt[0].RawDir); !os.IsNotExist(err) {
+		t.Errorf("base raw dir %s not cleaned up: %v", bt[0].RawDir, err)
+	}
+	for _, run := range res.Scanners {
+		if run.Status != "ok" {
+			t.Errorf("run %+v, want ok", run)
+		}
+	}
+}
+
+func TestScanPRBaseScanErrorKeepsNew(t *testing.T) {
+	r, _ := prRepo(t, "", "")
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir,
+		head:    []finding.Finding{fnd("opengrep", finding.CategorySAST, "old", "src/a.go")},
+		base:    []finding.Finding{fnd("opengrep", finding.CategorySAST, "old", "src/a.go")},
+		baseErr: errors.New("opengrep exited with code 7")}
+
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: prCtx(), Scanners: []scanner.Scanner{sast}})
+
+	run := runOf(t, res, "opengrep")
+	if run.Status != "error" || !strings.HasPrefix(run.Error, "base scan failed: ") {
+		t.Errorf("run = %+v, want error with \"base scan failed: \" prefix", run)
+	}
+	if got := statusOf(t, res, "old"); got != finding.StatusNew {
+		t.Errorf("old: %q, want new when the base scan failed", got)
+	}
+	assertNoEmptyStatus(t, res)
+}
+
+func TestScanPRUsesBasePolicy(t *testing.T) {
+	r, _ := prRepo(t, "version: 1\nmode: enforce\n", "version: 1\nmode: audit\n")
+	res, cfg := runScan(t, Options{Dir: r.Dir, Ctx: prCtx()})
+
+	if cfg.Mode != "enforce" {
+		t.Errorf("mode = %q, want enforce (from base)", cfg.Mode)
+	}
+	if !res.PolicyChanged {
+		t.Error("PolicyChanged = false, want true")
+	}
+	if !strings.Contains(res.PolicyDiff, "-mode: enforce") || !strings.Contains(res.PolicyDiff, "+mode: audit") {
+		t.Errorf("PolicyDiff = %q", res.PolicyDiff)
+	}
+	b, err := os.ReadFile(filepath.Join(r.Dir, ".shipguard", "policy.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "version: 1\nmode: enforce\n" {
+		t.Errorf("policy.yaml = %q, want the base bytes", b)
+	}
+}
+
+func TestScanPRPolicyUnchanged(t *testing.T) {
+	r, _ := prRepo(t, "version: 1\nmode: audit\n", "version: 1\nmode: audit\n")
+	res, cfg := runScan(t, Options{Dir: r.Dir, Ctx: prCtx()})
+	if res.PolicyChanged || res.PolicyDiff != "" || cfg.Mode != "audit" {
+		t.Errorf("changed=%v diff=%q mode=%q", res.PolicyChanged, res.PolicyDiff, cfg.Mode)
+	}
+}
+
+func TestScanPRPolicyAddedUsesDefaults(t *testing.T) {
+	r, _ := prRepo(t, "", "version: 1\nmode: audit\nscanners:\n  sast:\n    enabled: false\n")
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir,
+		head: []finding.Finding{fnd("opengrep", finding.CategorySAST, "x", "src/b.go")}}
+	res, cfg := runScan(t, Options{Dir: r.Dir, Ctx: prCtx(), Scanners: []scanner.Scanner{sast}})
+
+	if cfg.Mode != "enforce" || !cfg.Scanners.SAST.Enabled {
+		t.Errorf("cfg mode=%q sast=%v, want defaults", cfg.Mode, cfg.Scanners.SAST.Enabled)
+	}
+	if !res.PolicyChanged || !strings.Contains(res.PolicyDiff, "+mode: audit") {
+		t.Errorf("changed=%v diff=%q", res.PolicyChanged, res.PolicyDiff)
+	}
+	if run := runOf(t, res, "opengrep"); run.Status != "ok" {
+		t.Errorf("opengrep run = %+v, want ok (head cannot disable its own scanner)", run)
+	}
+	b, err := os.ReadFile(filepath.Join(r.Dir, ".shipguard", "policy.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := policy.Parse(b)
+	if err != nil {
+		t.Fatalf("policy.yaml does not parse: %v\n%s", err, b)
+	}
+	if got.Mode != "enforce" || !got.Scanners.SAST.Enabled {
+		t.Errorf("policy.yaml = %q, want defaults", b)
+	}
+}
+
+func TestScanPRMissingBaseFailsClosed(t *testing.T) {
+	r, _ := prRepo(t, "", "")
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir}
+	ctx := prCtx()
+	ctx.BaseRef = "nope"
+	_, _, err := Run(context.Background(), Options{Dir: r.Dir, Ctx: ctx, Categories: allCats(), Scanners: []scanner.Scanner{sast}, Now: fixedNow})
+	if err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("err = %v, want an error naming nope", err)
+	}
+	if len(sast.targets) != 0 {
+		t.Error("scanners ran although the base ref did not resolve")
+	}
+	if _, err := os.Stat(filepath.Join(r.Dir, ".shipguard", "findings.json")); !os.IsNotExist(err) {
+		t.Errorf("findings.json written on base-resolution failure: %v", err)
+	}
+}
+
+func TestScanPREmptyBaseRefFailsClosed(t *testing.T) {
+	r, _ := prRepo(t, "", "")
+	ctx := prCtx()
+	ctx.BaseRef = ""
+	if _, _, err := Run(context.Background(), Options{Dir: r.Dir, Ctx: ctx, Categories: allCats(), Now: fixedNow}); err == nil {
+		t.Fatal("want error for a PR without a base ref")
+	}
+}
+
+func TestScanPRBitbucketUnshallows(t *testing.T) {
+	isolate(t)
+	origin := gitfixture.New(t)
+	origin.Commit("one", "a.txt")
+	origin.Commit("two", "a.txt")
+	dst := filepath.Join(t.TempDir(), "clone")
+	origin.Git("clone", "-q", "--depth", "1", "file://"+origin.Dir, dst)
+	c := &gitfixture.Repo{T: t, Dir: dst}
+
+	ctx := platform.Context{Platform: "bitbucket", Event: platform.EventPR, BaseRef: "main"}
+	runScan(t, Options{Dir: c.Dir, Ctx: ctx})
+	if out := c.Git("rev-parse", "--is-shallow-repository"); out != "false" {
+		t.Fatalf("is-shallow = %s, want false after a Bitbucket PR scan", out)
+	}
+}
+
+func TestScanScannerErrorRecorded(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	r.Commit("base", "src/a.go")
+	bad := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir, headErr: errors.New("opengrep exited with code 2")}
+	good := &fake{name: "osv-scanner", cat: finding.CategorySCA, headDir: r.Dir,
+		head: []finding.Finding{fnd("osv-scanner", finding.CategorySCA, "cve", "go.mod")}}
+
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Platform: "local", Event: platform.EventPush}, Scanners: []scanner.Scanner{bad, good}})
+
+	if run := runOf(t, res, "opengrep"); run.Status != "error" || run.Error != "opengrep exited with code 2" {
+		t.Errorf("opengrep run = %+v", run)
+	}
+	if run := runOf(t, res, "osv-scanner"); run.Status != "ok" {
+		t.Errorf("osv run = %+v", run)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].ID != "cve" || res.Findings[0].Status != finding.StatusNone {
+		t.Errorf("findings = %+v", res.Findings)
+	}
+}
+
+func TestScanAppliesExcludes(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	commitFile(r, ".shipguard.yaml", "version: 1\npaths:\n  exclude: [\"vendor/\", \"**/*_test.go\"]\n")
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir, head: []finding.Finding{
+		fnd("opengrep", finding.CategorySAST, "keep", "src/a.go"),
+		fnd("opengrep", finding.CategorySAST, "vendor", "vendor/x.go"),
+		fnd("opengrep", finding.CategorySAST, "test", "src/a_test.go"),
+		fnd("opengrep", finding.CategorySAST, "out", ".shipguard/raw/x.json"),
+		fnd("opengrep", finding.CategorySAST, "cache", ".shipguard-cache/db"),
+		fnd("opengrep", finding.CategorySAST, "action", ".shipguard-action/a.sh"),
+		fnd("opengrep", finding.CategorySAST, "git", ".git/config"),
+		fnd("opengrep", finding.CategorySAST, "nm", "node_modules/a.js"),
+	}}
+
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Scanners: []scanner.Scanner{sast}})
+
+	if len(res.Findings) != 1 || res.Findings[0].ID != "keep" {
+		t.Errorf("findings = %+v, want only keep", res.Findings)
+	}
+	want := []string{"vendor/", "**/*_test.go", ".shipguard/", ".shipguard-cache/", ".shipguard-action/", ".git/", "node_modules/"}
+	if got := sast.targets[0].Exclude; !slices.Equal(got, want) {
+		t.Errorf("Target.Exclude = %q, want %q", got, want)
+	}
+}
+
+func TestScanTargets(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	commitFile(r, ".shipguard.yaml", "version: 1\ntimeouts:\n  per_scanner: 3m\nscanners:\n  sast:\n    rules: [p/x]\n    disable_rules: [r1]\n  sca:\n    licenses:\n      deny: [GPL-3.0]\n")
+	secrets := &fake{name: "gitleaks", cat: finding.CategorySecrets, headDir: r.Dir}
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir}
+
+	runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventSchedule}, Scanners: []scanner.Scanner{secrets, sast}})
+
+	st := secrets.targets[0]
+	if !st.FullHistory || st.LogOpts != "" {
+		t.Errorf("schedule secrets target = %+v, want FullHistory", st)
+	}
+	tt := sast.targets[0]
+	if tt.Dir != r.Dir || tt.RawDir != filepath.Join(r.Dir, ".shipguard", "raw") || tt.CacheDir != filepath.Join(r.Dir, ".shipguard-cache") {
+		t.Errorf("dirs = %q %q %q", tt.Dir, tt.RawDir, tt.CacheDir)
+	}
+	if tt.Timeout != 3*time.Minute || !slices.Equal(tt.Rules, []string{"p/x"}) || !slices.Equal(tt.DisableRules, []string{"r1"}) || !slices.Equal(tt.DenyLicenses, []string{"GPL-3.0"}) {
+		t.Errorf("target = %+v", tt)
+	}
+	if tt.FullHistory || tt.LogOpts != "" {
+		t.Errorf("non-secrets target carries history options: %+v", tt)
+	}
+
+	runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Scanners: []scanner.Scanner{secrets}})
+	if st := secrets.targets[1]; st.FullHistory || st.LogOpts != "" {
+		t.Errorf("push secrets target = %+v, want a directory scan", st)
+	}
+}
+
+func TestScanCategorySelection(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	commitFile(r, ".shipguard.yaml", "version: 1\nscanners:\n  iac:\n    enabled: false\n")
+	secrets := &fake{name: "gitleaks", cat: finding.CategorySecrets, headDir: r.Dir}
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir}
+	iac := &fake{name: "trivy-config", cat: finding.CategoryIaC, headDir: r.Dir}
+
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush},
+		Categories: []finding.Category{finding.CategorySAST, finding.CategoryIaC},
+		Scanners:   []scanner.Scanner{secrets, sast, iac}})
+
+	if len(secrets.targets) != 0 || len(iac.targets) != 0 || len(sast.targets) != 1 {
+		t.Errorf("calls: secrets=%d sast=%d iac=%d", len(secrets.targets), len(sast.targets), len(iac.targets))
+	}
+	if run := runOf(t, res, "trivy-config"); run.Status != "skipped" {
+		t.Errorf("disabled iac run = %+v, want skipped", run)
+	}
+	for _, run := range res.Scanners {
+		if run.Name == "gitleaks" {
+			t.Errorf("unselected scanner recorded: %+v", run)
+		}
+	}
+}
+
+func TestScanModeOverride(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	commitFile(r, ".shipguard.yaml", "# keep me\nversion: 1\nmode: enforce\n")
+	_, cfg := runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Mode: "audit"})
+	if cfg.Mode != "audit" {
+		t.Errorf("mode = %q, want audit", cfg.Mode)
+	}
+	b, err := os.ReadFile(filepath.Join(r.Dir, ".shipguard", "policy.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := policy.Parse(b); err != nil || got.Mode != "audit" {
+		t.Errorf("policy.yaml mode = %q, %v; want audit\n%s", got.Mode, err, b)
+	}
+
+	// The override also applies on top of the defaults when no file exists.
+	r2 := gitfixture.New(t)
+	r2.Commit("base", "a.go")
+	runScan(t, Options{Dir: r2.Dir, Ctx: platform.Context{Event: platform.EventPush}, Mode: "audit"})
+	b, _ = os.ReadFile(filepath.Join(r2.Dir, ".shipguard", "policy.yaml"))
+	if got, err := policy.Parse(b); err != nil || got.Mode != "audit" {
+		t.Errorf("defaults policy.yaml mode = %q, %v\n%s", got.Mode, err, b)
+	}
+
+	if _, _, err := Run(context.Background(), Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Categories: allCats(), Mode: "warn"}); err == nil {
+		t.Error("mode warn: want error")
+	}
+}
+
+func TestScanInvalidConfigIsError(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	commitFile(r, ".shipguard.yaml", "version: 1\nbogus: true\n")
+	_, _, err := Run(context.Background(), Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Categories: allCats()})
+	if !errors.Is(err, policy.ErrConfig) {
+		t.Fatalf("err = %v, want ErrConfig", err)
+	}
+}
+
+func TestScanWritesFindingsJSON(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	r.Commit("base", "src/a.go")
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir}
+	pctx := platform.Context{Platform: "gitlab", Event: platform.EventPush, HeadSHA: "abc", Repo: "g/p"}
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: pctx, Scanners: []scanner.Scanner{sast}, Version: "1.2.3"})
+
+	got, err := finding.ReadResult(filepath.Join(r.Dir, ".shipguard", "findings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SchemaVersion != 1 || got.ShipguardVersion != "1.2.3" || got.Findings == nil || len(got.Scanners) != 1 {
+		t.Errorf("findings.json = %+v", got)
+	}
+	validFindingsJSON(t, r.Dir)
+	var c platform.Context
+	if err := json.Unmarshal(got.Context, &c); err != nil || c != pctx {
+		t.Errorf("context = %s (%v), want %+v", got.Context, err, pctx)
+	}
+	var rc platform.Context
+	if err := json.Unmarshal(res.Context, &rc); err != nil || rc != pctx || res.ShipguardVersion != "1.2.3" {
+		t.Errorf("returned Result context = %s (%v), version %q", res.Context, err, res.ShipguardVersion)
+	}
+}
+
+// validFindingsJSON checks the written findings.json against the published schema.
+func validFindingsJSON(t *testing.T, dir string) {
+	t.Helper()
+	schema, err := jsonschema.NewCompiler().Compile("../../schema/findings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(filepath.Join(dir, ".shipguard", "findings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	v, err := jsonschema.UnmarshalJSON(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Validate(v); err != nil {
+		t.Errorf("findings.json violates the schema: %v", err)
+	}
+}
+
+func TestParseCategories(t *testing.T) {
+	ok := map[string][]finding.Category{
+		"":                     allCats(),
+		"all":                  allCats(),
+		"sast":                 {finding.CategorySAST},
+		" sca , iac ":          {finding.CategorySCA, finding.CategoryIaC},
+		"secrets,sast,sca,iac": allCats(),
+	}
+	for in, want := range ok {
+		got, err := ParseCategories(in)
+		if err != nil || !slices.Equal(got, want) {
+			t.Errorf("ParseCategories(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{",", " , ", "sast,bogus", "all,sast", "SAST"} {
+		if _, err := ParseCategories(in); !errors.Is(err, policy.ErrConfig) {
+			t.Errorf("ParseCategories(%q) err = %v, want ErrConfig", in, err)
+		}
+	}
+}
