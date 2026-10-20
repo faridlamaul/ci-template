@@ -1,0 +1,27 @@
+rules:
+  - id: shipguard.rust.sql-injection
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      The SQL statement is built with format! or string concatenation, which
+      allows SQL injection when any part is attacker controlled. Use bound
+      parameters: sqlx::query("... WHERE id = $1").bind(id), or diesel's
+      query builder and sql_query(...).bind.
+    pattern-either:
+      - pattern: sqlx::query(&format!(...))
+      - pattern: sqlx::query(format!(...).as_str())
+      - pattern: sqlx::query_as(&format!(...))
+      - pattern: sqlx::query_scalar(&format!(...))
+      - pattern: sqlx::query_as::<$D, $T>(&format!(...))
+      - pattern: sqlx::query_scalar::<$D, $T>(&format!(...))
+      - pattern: diesel::sql_query(format!(...))
+      - pattern: sql_query(format!(...))
+      - pattern: $DB.execute(&format!(...))
+      - pattern: $DB.execute(format!(...).as_str())
+      - pattern: $DB.query(&format!(...), ...)
+      - pattern: $DB.query_one(&format!(...), ...)
+      - pattern: $DB.batch_execute(&format!(...))
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      confidence: MEDIUM

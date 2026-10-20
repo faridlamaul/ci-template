@@ -1,0 +1,17 @@
+rules:
+  - id: shipguard.rust.tls-verify-disabled
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      TLS certificate or hostname verification is turned off, so any attacker
+      on the network path can impersonate the server. Remove the
+      danger_accept_* call and add the right CA with add_root_certificate
+      instead.
+    pattern-either:
+      - pattern: $B.danger_accept_invalid_certs(true)
+      - pattern: $B.danger_accept_invalid_hostnames(true)
+      - pattern: $B.set_verify(SslVerifyMode::NONE)
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH
