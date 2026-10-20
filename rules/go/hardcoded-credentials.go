@@ -15,5 +15,11 @@ func good() {
 	dbPassword := os.Getenv("DB_PASSWORD")
 	// ok: shipguard.go.hardcoded-credentials
 	passwordLabel := ""
-	_, _ = dbPassword, passwordLabel
+	// ok: shipguard.go.hardcoded-credentials
+	tokenURL := "https://auth.example.com/token"
+	// ok: shipguard.go.hardcoded-credentials
+	passwordPrompt := "Enter your password now"
+	// ok: shipguard.go.hardcoded-credentials
+	secretName := "db-credentials"
+	_, _, _, _, _ = dbPassword, passwordLabel, tokenURL, passwordPrompt, secretName
 }

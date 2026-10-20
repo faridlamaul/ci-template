@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/des"
 	"crypto/md5"
 	"crypto/rc4"
 	"crypto/sha1"
@@ -14,6 +15,8 @@ func bad(data, key []byte) {
 	sha1.New()
 	// ruleid: shipguard.go.weak-crypto
 	rc4.NewCipher(key)
+	// ruleid: shipguard.go.weak-crypto
+	des.NewCipher(key)
 }
 
 func good(data []byte) {

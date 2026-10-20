@@ -22,4 +22,6 @@ func good(w http.ResponseWriter, r *http.Request) {
 	_ = data
 	// ok: shipguard.go.path-traversal
 	os.ReadFile("/etc/hostname")
+	// ok: shipguard.go.path-traversal
+	os.WriteFile("/tmp/out", []byte(r.FormValue("x")), 0o600)
 }

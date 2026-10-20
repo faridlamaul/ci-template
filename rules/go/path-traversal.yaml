@@ -17,13 +17,30 @@ rules:
       - pattern: filepath.Base(...)
       - pattern: path.Base(...)
     pattern-sinks:
-      - pattern: os.Open(...)
-      - pattern: os.OpenFile(...)
-      - pattern: os.ReadFile(...)
-      - pattern: os.WriteFile(...)
-      - pattern: os.Remove(...)
-      - pattern: os.RemoveAll(...)
-      - pattern: http.ServeFile($W, $R, ...)
+      - patterns:
+          - pattern: os.Open($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: os.OpenFile($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: os.ReadFile($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: os.WriteFile($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: os.Remove($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: os.RemoveAll($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: os.Create($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: http.ServeFile($W, $R, $P)
+          - focus-metavariable: $P
     metadata:
       category: security
       cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"

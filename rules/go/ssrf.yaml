@@ -14,13 +14,36 @@ rules:
       - pattern: $R.PostFormValue(...)
       - pattern: $R.Header.Get(...)
     pattern-sinks:
-      - pattern: http.Get(...)
-      - pattern: http.Head(...)
-      - pattern: http.Post(...)
-      - pattern: |
-          ($C : *http.Client).Get(...)
-      - pattern: http.NewRequest($M, ...)
-      - pattern: http.NewRequestWithContext($CTX, $M, ...)
+      - patterns:
+          - pattern: http.Get($URL)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.Head($URL)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.Post($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.PostForm($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: "($C : *http.Client).Get($URL)"
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: "($C : *http.Client).Head($URL)"
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: "($C : *http.Client).Post($URL, ...)"
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: "($C : *http.Client).PostForm($URL, ...)"
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.NewRequest($M, $URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.NewRequestWithContext($CTX, $M, $URL, ...)
+          - focus-metavariable: $URL
     metadata:
       category: security
       cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
