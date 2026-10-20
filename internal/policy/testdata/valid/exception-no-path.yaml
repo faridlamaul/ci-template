@@ -1,0 +1,5 @@
+version: 1
+exceptions:
+  - id: shipguard.go.weak-hash
+    reason: "legacy checksum, not security relevant"
+    expires: 2027-03-01

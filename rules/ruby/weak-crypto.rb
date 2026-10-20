@@ -1,0 +1,20 @@
+require "digest"
+require "openssl"
+
+def bad(data)
+  # ruleid: shipguard.ruby.weak-crypto
+  Digest::MD5.hexdigest(data)
+  # ruleid: shipguard.ruby.weak-crypto
+  Digest::SHA1.hexdigest(data)
+  # ruleid: shipguard.ruby.weak-crypto
+  OpenSSL::Cipher.new("RC4")
+  # ruleid: shipguard.ruby.weak-crypto
+  OpenSSL::Cipher.new("DES")
+  # ruleid: shipguard.ruby.weak-crypto
+  OpenSSL::Cipher.new("DES-EDE3-CBC")
+end
+
+def good(data)
+  # ok: shipguard.ruby.weak-crypto
+  Digest::SHA256.hexdigest(data)
+end

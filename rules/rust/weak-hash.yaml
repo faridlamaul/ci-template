@@ -1,0 +1,21 @@
+rules:
+  - id: shipguard.rust.weak-hash
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      MD5 and SHA-1 are broken for security purposes (practical collisions).
+      Use SHA-256 or SHA-3 (sha2, sha3 crates) or BLAKE3 for hashing, and
+      argon2 or bcrypt for passwords.
+    pattern-either:
+      - pattern: md5::compute(...)
+      - pattern: Md5::new()
+      - pattern: Md5::digest(...)
+      - pattern: Sha1::new()
+      - pattern: Sha1::digest(...)
+      - pattern: sha1::Sha1::from(...)
+      - pattern: MessageDigest::md5()
+      - pattern: MessageDigest::sha1()
+    metadata:
+      category: security
+      cwe: "CWE-328: Use of Weak Hash"
+      confidence: HIGH

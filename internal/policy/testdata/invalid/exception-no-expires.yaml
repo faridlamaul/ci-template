@@ -1,0 +1,3 @@
+exceptions:
+  - id: CVE-2026-1234
+    reason: "waiting for upstream"

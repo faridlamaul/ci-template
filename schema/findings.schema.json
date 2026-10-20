@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/faridlamaul/shipguard/main/schema/findings.schema.json",
+  "title": "shipguard findings.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer"
+    },
+    "shipguard_version": {
+      "type": "string"
+    },
+    "context": {
+      "type": "object"
+    },
+    "scanners": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "secrets",
+              "sast",
+              "sca",
+              "iac"
+            ]
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error",
+              "skipped"
+            ]
+          },
+          "error": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "category",
+          "status",
+          "duration_ms"
+        ]
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scanner": {
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "secrets",
+              "sast",
+              "sca",
+              "iac"
+            ]
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "info"
+            ]
+          },
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "fixed_version": {
+            "type": "string"
+          },
+          "fix_available": {
+            "type": "boolean"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "new",
+              "existing"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "scanner",
+          "category",
+          "severity",
+          "file",
+          "message",
+          "fingerprint"
+        ]
+      }
+    },
+    "policy_changed": {
+      "type": "boolean"
+    },
+    "policy_diff": {
+      "type": "string"
+    },
+    "policy_defaults": {
+      "type": "boolean",
+      "description": "No config file was found at the revision the policy is read from; built-in defaults apply."
+    }
+  },
+  "required": [
+    "schema_version",
+    "shipguard_version",
+    "scanners",
+    "findings"
+  ]
+}

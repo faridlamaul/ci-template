@@ -1,0 +1,4 @@
+exceptions:
+  - id: CVE-1
+    reason: r
+    expires: 2026-12-31T10:00:00Z

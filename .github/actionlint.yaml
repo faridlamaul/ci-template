@@ -1,0 +1,6 @@
+paths:
+  # actionlint 1.7.12 does not know job.workflow_ref / job.workflow_sha
+  # (docs/verification.md V7). Remove once it does.
+  .github/workflows/scan.yml:
+    ignore:
+      - 'property "workflow_(ref|sha)" is not defined in object type'

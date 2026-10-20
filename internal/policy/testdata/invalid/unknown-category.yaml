@@ -1,0 +1,3 @@
+policy:
+  fail_on:
+    dast: high

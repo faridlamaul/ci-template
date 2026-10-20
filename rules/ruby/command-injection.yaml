@@ -1,0 +1,24 @@
+rules:
+  - id: shipguard.ruby.command-injection
+    languages: [ruby]
+    severity: ERROR
+    message: >-
+      A shell command is built from an interpolated or concatenated string, so
+      shell metacharacters in the data can run arbitrary commands. Pass the
+      program and each argument separately (system("ls", path)) so no shell is
+      involved.
+    patterns:
+      - pattern-either:
+          - pattern: system("...#{...}...", ...)
+          - pattern: exec("...#{...}...", ...)
+          - pattern: "`...#{...}...`"
+          - pattern: IO.popen("...#{...}...", ...)
+          - pattern: Open3.capture2("...#{...}...", ...)
+          - pattern: Open3.capture3("...#{...}...", ...)
+          - pattern: Kernel.system("...#{...}...", ...)
+          - pattern: system($A + $B, ...)
+          - pattern: exec($A + $B, ...)
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      confidence: HIGH

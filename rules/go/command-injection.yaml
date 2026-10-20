@@ -1,0 +1,23 @@
+rules:
+  - id: shipguard.go.command-injection
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A shell is started with a command string that is not a constant, so
+      shell metacharacters in the data can run arbitrary commands. Call
+      exec.Command with the program and each argument as separate values
+      instead of passing a composed string to "sh -c".
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $CMD, ...)
+          - pattern: exec.Command("bash", "-c", $CMD, ...)
+          - pattern: exec.Command("/bin/sh", "-c", $CMD, ...)
+          - pattern: exec.Command("/bin/bash", "-c", $CMD, ...)
+          - pattern: exec.CommandContext($CTX, "sh", "-c", $CMD, ...)
+          - pattern: exec.CommandContext($CTX, "bash", "-c", $CMD, ...)
+      - pattern-not: exec.Command($SH, "-c", "...", ...)
+      - pattern-not: exec.CommandContext($CTX, $SH, "-c", "...", ...)
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      confidence: HIGH

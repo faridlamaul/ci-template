@@ -1,7 +1,8 @@
 name: CI
 
 # Lints every workflow here, so a broken reusable workflow fails in this
-# repository instead of in the repositories that call it.
+# repository instead of in the repositories that call it, and tests, builds and
+# scans shipguard itself.
 on:
   pull_request:
   workflow_call:
@@ -10,6 +11,111 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+
+      - name: Check formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Test GitLab publish script
+        run: make publish-test
+
+      # Pinned, so a new govulncheck release cannot fail CI by itself.
+      - name: Check vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  image:
+    name: Image and e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: shipguard:dev
+          build-args: VERSION=ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The same checks as make image-test, without building the image again.
+      - name: Check image
+        run: |
+          docker run --rm shipguard:dev version
+          docker run --rm --entrypoint sh shipguard:dev -c 'gitleaks version && opengrep --version && osv-scanner --version && trivy --version'
+
+      # Runs inside the image, so CI tests the exact opengrep binary that ships
+      # (the pinned asset is a musl build and does not run on the glibc runner).
+      - name: Test rules
+        run: >
+          docker run --rm -v "$PWD/rules:/rules:ro"
+          --entrypoint opengrep shipguard:dev test /rules
+
+      - name: End-to-end tests
+        env:
+          SHIPGUARD_IMAGE: shipguard:dev
+        run: go test -tags e2e -count=1 ./e2e/
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Scoped to the files shipguard owns. The legacy reusable workflows
+      # (go-ci, node-ci, python-ci, docker-build, go-release, semantic-release,
+      # pr-title) have known findings that sub-project #2 fixes; add them
+      # here when it does.
+      - name: Audit workflows
+        run: >
+          docker run --rm -v "$PWD:/repo" -w /repo
+          ghcr.io/zizmorcore/zizmor:1.31.1@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9
+          --offline --min-severity medium
+          .github/workflows/ci.yml
+          .github/workflows/scan.yml
+          .github/workflows/adapter-github.yml
+          .github/workflows/bump-scanners.yml
+          .github/workflows/dogfood.yml
+          .github/workflows/release.yml
+          adapters/github
+
   actionlint:
     name: actionlint
     runs-on: ubuntu-latest

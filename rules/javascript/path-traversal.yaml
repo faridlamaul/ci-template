@@ -1,0 +1,57 @@
+rules:
+  - id: shipguard.javascript.path-traversal
+    languages: [javascript, typescript]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A value from the HTTP request reaches a file system call without being
+      reduced to a safe name, so "../" sequences can read or write files
+      outside the intended directory. Use path.basename on the value, or
+      resolve the path and verify it stays inside the allowed root.
+    pattern-sources:
+      - pattern: $REQ.query.$P
+      - pattern: $REQ.params.$P
+      - pattern: $REQ.body.$P
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: fs.readFile($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.readFileSync($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.createReadStream($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.createWriteStream($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.writeFile($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.writeFileSync($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.unlink($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.unlinkSync($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.rm($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: fs.rmSync($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: $RES.sendFile($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: $RES.download($P, ...)
+          - focus-metavariable: $P
+    metadata:
+      category: security
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      confidence: MEDIUM

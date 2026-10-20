@@ -1,0 +1,23 @@
+# Pipeline of the gitlab.com publish project (gitlab.com/faridlamaul/shipguard).
+# scripts/publish-gitlab.sh copies this file to the project root and the smoke
+# test to test/.gitlab-ci.yml. Every pipeline runs the smoke test against the
+# rendered templates/scan.yml; on a release tag (X.Y.Z) the release job then
+# creates the GitLab release, which publishes the version to the CI/CD Catalog.
+stages: [test, verify, release]
+
+include:
+  - local: test/.gitlab-ci.yml
+
+release:
+  stage: release
+  # Pinned by tag and digest; bump both by hand.
+  image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
+  needs:
+    - job: smoke-assert
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^\d+\.\d+\.\d+$/
+  script:
+    - echo "release $CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: ./INTEGRITY.md

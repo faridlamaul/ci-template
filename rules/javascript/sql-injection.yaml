@@ -1,0 +1,36 @@
+rules:
+  - id: shipguard.javascript.sql-injection
+    languages: [javascript, typescript]
+    mode: taint
+    severity: ERROR
+    message: >-
+      The SQL statement is built with concatenation or a template literal
+      (directly or through a variable), which allows SQL injection when any
+      part is attacker controlled. Use placeholders and pass the values
+      separately, for example db.query("SELECT * FROM users WHERE id = $1",
+      [id]). For Prisma use the tagged $queryRaw template.
+    pattern-sources:
+      - pattern: "`...${$X}...`"
+      - patterns:
+          - pattern: $A + $B
+          - pattern-not: '"..." + "..."'
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.query($Q, ...)
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern: $DB.execute($Q, ...)
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern: $DB.raw($Q, ...)
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern: $DB.$queryRawUnsafe($Q, ...)
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern: $DB.$executeRawUnsafe($Q, ...)
+          - focus-metavariable: $Q
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      confidence: MEDIUM

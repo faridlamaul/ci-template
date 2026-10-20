@@ -1,0 +1,14 @@
+rules:
+  - id: shipguard.rust.unsafe-block
+    languages: [rust]
+    severity: INFO
+    message: >-
+      An unsafe block bypasses the compiler's memory-safety guarantees.
+      Confirm it is required, keep it as small as possible, document the
+      invariants in a SAFETY comment, and prefer a safe abstraction where one
+      exists.
+    pattern: unsafe { ... }
+    metadata:
+      category: security
+      cwe: "CWE-242: Use of Inherently Dangerous Function"
+      confidence: LOW

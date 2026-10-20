@@ -1,0 +1,23 @@
+rules:
+  - id: shipguard.ruby.weak-crypto
+    languages: [ruby]
+    severity: WARNING
+    message: >-
+      MD5, SHA-1, DES and RC4 are broken for security purposes. Use SHA-256 or
+      SHA-3 for hashing, bcrypt or argon2 for passwords, and AES-256-GCM for
+      encryption.
+    pattern-either:
+      - pattern: Digest::MD5.$M(...)
+      - pattern: Digest::SHA1.$M(...)
+      - pattern: OpenSSL::Digest::MD5.$M(...)
+      - pattern: OpenSSL::Digest::SHA1.$M(...)
+      - pattern: OpenSSL::Digest.new("MD5")
+      - pattern: OpenSSL::Digest.new("SHA1")
+      - pattern: OpenSSL::Cipher.new("DES")
+      - pattern: OpenSSL::Cipher.new("DES-EDE3-CBC")
+      - pattern: OpenSSL::Cipher.new("RC4")
+      - pattern: OpenSSL::Cipher::DES.new(...)
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      confidence: HIGH

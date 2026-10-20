@@ -1,0 +1,17 @@
+rules:
+  - id: shipguard.javascript.unsafe-deserialization
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      node-serialize's unserialize is inherently a remote-code-execution vector
+      with no safe use, so it is always an error. js-yaml's full schema can
+      also execute code embedded in crafted input. Use JSON.parse for data
+      exchange. This rule assumes js-yaml 4, where yaml.load is safe by
+      default; on js-yaml 3 yaml.load is unsafe, so upgrade or use safeLoad.
+    pattern-either:
+      - pattern: $SER.unserialize(...)
+      - pattern: "yaml.load($X, { schema: yaml.DEFAULT_FULL_SCHEMA, ... })"
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      confidence: MEDIUM

@@ -1,0 +1,34 @@
+rules:
+  - id: shipguard.python.ssrf
+    languages: [python]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A URL taken from the HTTP request is fetched by the server, which lets an
+      attacker reach internal services and cloud metadata endpoints. Only
+      accept destinations from an allow-list, or build the URL from a fixed
+      host and validate the user-supplied part.
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.GET.get(...)
+      - pattern: request.POST.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: requests.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: httpx.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: urllib.request.urlopen($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: urlopen($URL, ...)
+          - focus-metavariable: $URL
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      confidence: MEDIUM

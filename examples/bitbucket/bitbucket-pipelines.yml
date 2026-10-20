@@ -1,0 +1,14 @@
+# Bitbucket: bitbucket-pipelines.yml
+#
+# Status: adapter in development. This works once the first shipguard release
+# ships. Replace vX.Y.Z with the release tag.
+pipelines:
+  default:
+    - step:
+        name: security
+        script:
+          - pipe: docker://ghcr.io/faridlamaul/shipguard:vX.Y.Z
+            variables:
+              SCANNERS: all
+              MODE: enforce
+              CONFIG: .shipguard.yaml

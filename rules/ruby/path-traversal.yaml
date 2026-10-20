@@ -1,0 +1,45 @@
+rules:
+  - id: shipguard.ruby.path-traversal
+    languages: [ruby]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A value from the HTTP request reaches a file system call without being
+      reduced to a safe name, so "../" sequences can read or write files
+      outside the intended directory. Use File.basename on the value, or expand
+      the path and verify it stays inside the allowed root.
+    pattern-sources:
+      - pattern: params[...]
+      - pattern: params.fetch(...)
+      - pattern: params.require(...)
+    pattern-sanitizers:
+      - pattern: File.basename(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: File.read($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: File.open($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: File.write($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: File.delete($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: File.binread($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: IO.read($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: send_file($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: FileUtils.rm_rf($P)
+          - focus-metavariable: $P
+    metadata:
+      category: security
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      confidence: MEDIUM

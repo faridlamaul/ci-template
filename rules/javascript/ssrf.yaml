@@ -1,0 +1,61 @@
+rules:
+  - id: shipguard.javascript.ssrf
+    languages: [javascript, typescript]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A URL taken from the HTTP request is fetched by the server, which lets an
+      attacker reach internal services and cloud metadata endpoints. Only
+      accept destinations from an allow-list, or build the URL from a fixed
+      host and validate the user-supplied part.
+    pattern-sources:
+      - pattern: $REQ.query.$P
+      - pattern: $REQ.params.$P
+      - pattern: $REQ.body.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: fetch($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.head($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.delete($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.post($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.put($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.patch($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: got($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: got.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: https.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.request($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: https.request($URL, ...)
+          - focus-metavariable: $URL
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      confidence: MEDIUM

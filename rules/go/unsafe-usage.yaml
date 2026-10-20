@@ -1,0 +1,16 @@
+rules:
+  - id: shipguard.go.unsafe-usage
+    languages: [go]
+    severity: INFO
+    message: >-
+      The unsafe package bypasses Go's type and memory safety. Confirm the
+      conversion is required, keep it small and documented, and prefer safe
+      alternatives such as encoding/binary or generics where possible.
+    pattern-either:
+      - pattern: unsafe.Pointer(...)
+      - pattern: unsafe.Slice(...)
+      - pattern: unsafe.String(...)
+    metadata:
+      category: security
+      cwe: "CWE-242: Use of Inherently Dangerous Function"
+      confidence: LOW

@@ -1,0 +1,98 @@
+name: Reusable shipguard scan
+
+# Caller permissions required: contents: read, security-events: write and
+# actions: read (upload-sarif needs the last one on private repositories).
+
+on:
+  workflow_call:
+    inputs:
+      scanners:
+        description: "Comma-separated scanners to run, or all"
+        type: string
+        default: all
+        required: false
+      mode:
+        description: "Gate mode (enforce or audit); empty uses the policy default"
+        type: string
+        default: ""
+        required: false
+      config:
+        description: "Path to the shipguard config file"
+        type: string
+        default: .shipguard.yaml
+        required: false
+      image:
+        description: "Image to run; empty resolves from the workflow ref or builds from source"
+        type: string
+        default: ""
+        required: false
+      upload_sarif:
+        description: "Upload SARIF to code scanning (auto, true or false)"
+        type: string
+        default: auto
+        required: false
+    outputs:
+      result:
+        description: "Gate result (pass, fail or audit)"
+        value: ${{ jobs.scan.outputs.result }}
+      new_findings:
+        description: "Number of new findings"
+        value: ${{ jobs.scan.outputs.new_findings }}
+      total_findings:
+        description: "Total number of findings"
+        value: ${{ jobs.scan.outputs.total_findings }}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: shipguard
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    outputs:
+      result: ${{ steps.shipguard.outputs.result }}
+      new_findings: ${{ steps.shipguard.outputs.new_findings }}
+      total_findings: ${{ steps.shipguard.outputs.total_findings }}
+    steps:
+      # Full history: PR scans diff against the base ref.
+      - name: Check out caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # job.workflow_* describe this workflow; github.workflow_* the caller.
+      - name: Resolve image from workflow ref
+        id: ref
+        env:
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          INPUT_IMAGE: ${{ inputs.image }}
+        run: |
+          image="$INPUT_IMAGE"
+          if [ -z "$image" ] && [[ "$WORKFLOW_REF" =~ @refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            image="ghcr.io/faridlamaul/shipguard:${BASH_REMATCH[1]}"
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Check out shipguard adapter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: faridlamaul/shipguard
+          ref: ${{ job.workflow_sha }}
+          path: .shipguard-action
+          persist-credentials: false
+
+      - name: Run shipguard
+        id: shipguard
+        uses: ./.shipguard-action/adapters/github
+        with:
+          scanners: ${{ inputs.scanners }}
+          mode: ${{ inputs.mode }}
+          config: ${{ inputs.config }}
+          image: ${{ steps.ref.outputs.image }}
+          upload_sarif: ${{ inputs.upload_sarif }}

@@ -1,0 +1,28 @@
+version: 1
+mode: audit
+paths:
+  exclude: ["vendor/", "**/testdata/**"]
+scanners:
+  secrets: { enabled: true }
+  sast:
+    enabled: true
+    rules: ["./.shipguard/rules/"]
+    disable_rules: ["shipguard.go.weak-hash"]
+    default_excludes: false
+  sca:
+    enabled: true
+    licenses: { deny: [AGPL-3.0] }
+  iac: { enabled: false }
+timeouts:
+  per_scanner: 30m
+policy:
+  fail_on:
+    secrets: any
+    sast: critical
+    sca: { severity: critical, fix_available_only: false }
+    iac: medium
+exceptions:
+  - id: CVE-2026-1234
+    path: "go.sum"
+    reason: "Not reachable; waiting for upstream v2.3"
+    expires: 2026-12-31

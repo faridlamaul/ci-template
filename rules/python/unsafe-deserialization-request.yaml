@@ -1,0 +1,39 @@
+rules:
+  - id: shipguard.python.unsafe-deserialization-request
+    languages: [python]
+    mode: taint
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is deserialized with pickle, marshal, dill or
+      an unsafe yaml loader, which lets a client run arbitrary code on the
+      server. Parse request data with json.loads or yaml.safe_load.
+    pattern-sources:
+      - pattern: request.data
+      - pattern: request.get_data(...)
+      - pattern: request.body
+      - pattern: request.stream.read(...)
+      - pattern: request.files[...].read()
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.form[...]
+      - pattern: request.GET.get(...)
+      - pattern: request.POST.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: pickle.loads($X)
+              - pattern: pickle.load($X)
+              - pattern: cPickle.loads($X)
+              - pattern: marshal.loads($X)
+              - pattern: dill.loads($X)
+              - pattern: yaml.load($X, ...)
+              - pattern: yaml.load_all($X, ...)
+              - pattern: yaml.unsafe_load($X)
+              - pattern: yaml.full_load($X)
+          - pattern-not: yaml.load($X, Loader=yaml.SafeLoader)
+          - pattern-not: yaml.load($X, Loader=SafeLoader)
+          - focus-metavariable: $X
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      confidence: HIGH

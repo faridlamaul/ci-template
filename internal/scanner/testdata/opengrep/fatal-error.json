@@ -1,0 +1,1 @@
+{"version":"1.31.0","results":[],"errors":[{"code":2,"level":"error","type":"Rule parse error","rule_id":"bad","message":"Rule parse error in rule bad:\n Invalid pattern for Python: Stdlib.Parsing.Parse_error\n----- pattern -----\nfoo(\n----- end pattern -----\n"}],"paths":{"scanned":["app.py","bad.py"]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -1,0 +1,46 @@
+rules:
+  - id: shipguard.rust.sql-injection
+    languages: [rust]
+    mode: taint
+    severity: ERROR
+    message: >-
+      The SQL statement is built with format! (directly or through a
+      variable), which allows SQL injection when any part is attacker
+      controlled. Use bound parameters: sqlx::query("... WHERE id = $1")
+      .bind(id), rusqlite's params!, or diesel's query builder and
+      sql_query(...).bind.
+    pattern-sources:
+      - pattern: format!(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: sqlx::query($Q)
+              - pattern: sqlx::query(&$Q)
+              - pattern: sqlx::query_as($Q)
+              - pattern: sqlx::query_as(&$Q)
+              - pattern: sqlx::query_scalar($Q)
+              - pattern: sqlx::query_scalar(&$Q)
+              - pattern: "sqlx::query_as::<$D, $T>($Q)"
+              - pattern: "sqlx::query_as::<$D, $T>(&$Q)"
+              - pattern: "sqlx::query_scalar::<$D, $T>($Q)"
+              - pattern: "sqlx::query_scalar::<$D, $T>(&$Q)"
+              - pattern: diesel::sql_query($Q)
+              - pattern: sql_query($Q)
+              - pattern: $DB.execute($Q, $P)
+              - pattern: $DB.execute(&$Q, $P)
+              - pattern: $DB.execute_batch($Q)
+              - pattern: $DB.execute_batch(&$Q)
+              - pattern: $DB.batch_execute($Q)
+              - pattern: $DB.batch_execute(&$Q)
+              - pattern: $DB.prepare($Q)
+              - pattern: $DB.prepare(&$Q)
+              - pattern: $DB.query_row($Q, $P)
+              - pattern: $DB.query_row(&$Q, $P)
+              - pattern: $DB.query($Q, $P)
+              - pattern: $DB.query(&$Q, $P)
+              - pattern: $DB.query_one(&$Q, $P)
+          - focus-metavariable: $Q
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      confidence: MEDIUM

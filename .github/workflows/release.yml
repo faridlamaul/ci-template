@@ -26,3 +26,214 @@ jobs:
     uses: ./.github/workflows/semantic-release.yml
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Tags created with GITHUB_TOKEN do not trigger other workflows, so the
+  # artifacts are built here instead of on a tag push. The image is signed by
+  # this workflow on refs/heads/main; docs/github.md shows how to verify it.
+  image:
+    name: Image
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.version }}
+          persist-credentials: false
+
+      - id: version
+        name: Strip the v prefix
+        env:
+          TAG: ${{ needs.release.outputs.version }}
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A published version is never rebuilt or retagged: re-running an old
+      # run must not give vX.Y.Z a new digest or move vX.Y and vX back. A
+      # re-run still signs and attests the existing digest, so a run that
+      # failed after the push (for example at signing) can be recovered.
+      - id: existing
+        name: Look for a published image
+        env:
+          TAG: ${{ needs.release.outputs.version }}
+        run: |
+          if docker buildx imagetools inspect "ghcr.io/faridlamaul/shipguard:${TAG}" > /dev/null 2>&1; then
+            digest=$(docker buildx imagetools inspect "ghcr.io/faridlamaul/shipguard:${TAG}" --format '{{json .Manifest}}' | jq -r .digest)
+            case $digest in sha256:*) ;; *) echo "::error::cannot read the digest of ${TAG}"; exit 1 ;; esac
+            echo "::notice::ghcr.io/faridlamaul/shipguard:${TAG} already exists (${digest}); it is not rebuilt"
+            echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # vX.Y.Z and X.Y.Z always; vX.Y and vX for stable releases only. No
+      # latest. A prerelease (v1.3.0-rc.1) gets v1.3.0-rc.1 and 1.3.0-rc.1.
+      # prefix=v instead of a v in the pattern: metadata-action replaces the
+      # pattern with {{version}} for prereleases, but keeps the prefix.
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/faridlamaul/shipguard
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},prefix=v,value=${{ needs.release.outputs.version }}
+            type=semver,pattern={{version}},value=${{ needs.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},prefix=v,value=${{ needs.release.outputs.version }},enable=${{ !contains(needs.release.outputs.version, '-') }}
+            type=semver,pattern={{major}},prefix=v,value=${{ needs.release.outputs.version }},enable=${{ !contains(needs.release.outputs.version, '-') }}
+
+      - id: build
+        name: Build and push image
+        if: steps.existing.outputs.digest == ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          provenance: mode=max
+          sbom: true
+
+      - id: image
+        name: Image digest
+        env:
+          BUILT: ${{ steps.build.outputs.digest }}
+          EXISTING: ${{ steps.existing.outputs.digest }}
+        run: echo "digest=${BUILT:-$EXISTING}" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign image
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/faridlamaul/shipguard@${DIGEST}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/faridlamaul/shipguard
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+          TAG: ${{ needs.release.outputs.version }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "## Image"
+            echo
+            echo "Digest: \`ghcr.io/faridlamaul/shipguard@${DIGEST}\`"
+            echo
+            echo "Tags:"
+            echo
+            echo '```text'
+            printf '%s\n' "$TAGS"
+            echo '```'
+            echo
+            echo "Verify:"
+            echo
+            echo '```bash'
+            echo "cosign verify ghcr.io/faridlamaul/shipguard:${TAG} \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  --certificate-identity https://github.com/faridlamaul/shipguard/.github/workflows/release.yml@refs/heads/main"
+            echo "gh attestation verify oci://ghcr.io/faridlamaul/shipguard:${TAG} --repo faridlamaul/shipguard"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishes the rendered templates to gitlab.com/faridlamaul/shipguard; its
+  # pipeline smoke-tests them and releases the tag to the CI/CD Catalog.
+  # GitLab versions are X.Y.Z only, so prereleases are not published there.
+  gitlab:
+    name: GitLab component
+    needs: [release, image]
+    if: needs.release.outputs.released == 'true' && !contains(needs.release.outputs.version, '-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.version }}
+          persist-credentials: false
+
+      - name: Render templates
+        env:
+          TAG: ${{ needs.release.outputs.version }}
+        run: |
+          mkdir -p dist
+          ./scripts/render-gitlab.sh "${TAG#v}" dist/gitlab > dist/integrity.txt
+          cat dist/integrity.txt
+
+      - name: Publish to gitlab.com
+        env:
+          TAG: ${{ needs.release.outputs.version }}
+          GITLAB_PUBLISH_TOKEN: ${{ secrets.GITLAB_PUBLISH_TOKEN }}
+          RENDERED_DIR: dist/gitlab
+          INTEGRITY_FILE: dist/integrity.txt
+        run: VERSION="${TAG#v}" ./scripts/publish-gitlab.sh
+
+      - name: Summary
+        env:
+          TAG: ${{ needs.release.outputs.version }}
+        run: |
+          {
+            echo "## GitLab component ${TAG#v}"
+            echo
+            echo "Published to https://gitlab.com/faridlamaul/shipguard/-/tags/${TAG#v}. Integrity hashes for \`include: remote\`:"
+            echo
+            echo '```text'
+            sed 's|^dist/gitlab/|templates/|' dist/integrity.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Users reference the action as faridlamaul/shipguard@vX, so the major tag
+  # follows the newest stable release once its artifacts are published.
+  # shiptag ignores tags like v1 because they are not full semantic versions.
+  major-tag:
+    name: Move major tag
+    needs: [release, image, gitlab]
+    if: needs.release.outputs.released == 'true' && !contains(needs.release.outputs.version, '-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.version }}
+          # The job pushes the major tag with these credentials.
+          persist-credentials: true # zizmor: ignore[artipacked]
+
+      - name: Point the major tag at the release
+        env:
+          TAG: ${{ needs.release.outputs.version }}
+        run: |
+          major="${TAG%%.*}"
+          # Only the newest stable release of this major moves it, so a
+          # re-run of an older run cannot move it back.
+          newest=$(git ls-remote --tags --refs origin "refs/tags/${major}.*" \
+            | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          if [ "$newest" != "$TAG" ]; then
+            echo "::notice::$TAG is not the newest stable ${major} release ($newest); ${major} stays"
+            exit 0
+          fi
+          git tag --force "$major" HEAD
+          git push --force origin "refs/tags/$major"

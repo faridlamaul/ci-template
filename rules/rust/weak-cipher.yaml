@@ -1,0 +1,22 @@
+rules:
+  - id: shipguard.rust.weak-cipher
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      DES, 3DES and RC4 are broken or obsolete ciphers. Use AES-256-GCM or
+      ChaCha20-Poly1305 (aes-gcm, chacha20poly1305 crates) instead.
+    pattern-either:
+      - pattern: Des::new(...)
+      - pattern: Des::new_from_slice(...)
+      - pattern: TdesEde3::new(...)
+      - pattern: TdesEde3::new_from_slice(...)
+      - pattern: Rc4::new(...)
+      - pattern: Rc4::new_from_slice(...)
+      - pattern: Cipher::des_cbc()
+      - pattern: Cipher::des_ecb()
+      - pattern: Cipher::des_ede3_cbc()
+      - pattern: Cipher::rc4()
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      confidence: HIGH

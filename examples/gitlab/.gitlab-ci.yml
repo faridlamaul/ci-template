@@ -1,0 +1,14 @@
+# GitLab: .gitlab-ci.yml
+#
+# Status: adapter in development. This works once the first shipguard release
+# ships. Replace X.Y.Z with the release version (no "v" prefix on GitLab).
+include:
+  - component: gitlab.com/faridlamaul/shipguard/scan@X.Y.Z
+    inputs:
+      scanners: all
+      mode: enforce
+      config: .shipguard.yaml
+# Self-managed GitLab:
+#  - remote: https://gitlab.com/faridlamaul/shipguard/-/raw/X.Y.Z/templates/scan.yml
+#    integrity: sha256-<published hash>
+#    inputs: { scanners: all, mode: enforce, config: .shipguard.yaml }

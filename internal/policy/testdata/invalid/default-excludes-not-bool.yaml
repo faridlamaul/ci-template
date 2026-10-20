@@ -1,0 +1,4 @@
+version: 1
+scanners:
+  sast:
+    default_excludes: [true]

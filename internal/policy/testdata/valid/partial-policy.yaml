@@ -1,0 +1,4 @@
+mode: enforce
+policy:
+  fail_on:
+    sast: medium

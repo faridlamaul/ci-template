@@ -1,0 +1,42 @@
+rules:
+  - id: shipguard.ruby.ssrf
+    languages: [ruby]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A URL taken from the HTTP request is fetched by the server, which lets an
+      attacker reach internal services and cloud metadata endpoints. Only
+      accept destinations from an allow-list, or build the URL from a fixed
+      host and validate the user-supplied part.
+    pattern-sources:
+      - pattern: params[...]
+      - pattern: params.fetch(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: Net::HTTP.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: Net::HTTP.get_response($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: Net::HTTP.post($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: URI.open($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: open($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: HTTParty.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: Faraday.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: RestClient.$M($URL, ...)
+          - focus-metavariable: $URL
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      confidence: MEDIUM
