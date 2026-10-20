@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +13,10 @@ import (
 	"time"
 
 	"github.com/faridlamaul/shipguard/internal/exitcode"
+	"github.com/faridlamaul/shipguard/internal/finding"
 	"github.com/faridlamaul/shipguard/internal/platform"
+	"github.com/faridlamaul/shipguard/internal/policy"
+	"github.com/faridlamaul/shipguard/internal/report"
 	"github.com/faridlamaul/shipguard/internal/scan"
 	"github.com/faridlamaul/shipguard/internal/scanner"
 	"github.com/spf13/cobra"
@@ -88,7 +92,7 @@ func newRoot(getenv func(string) string, stdout, stderr io.Writer) (*cobra.Comma
 
 	root.AddCommand(
 		scanCmd(g, getenv, stdout, stderr),
-		stubCmd("gate", "Apply the policy to the scan results"),
+		gateCmd(g, getenv, stdout),
 		stubCmd("report", "Publish scan results to the CI platform"),
 		stubCmd("run", "Scan, gate, and report in one step"),
 		versionCmd(stdout),
@@ -174,6 +178,89 @@ func scanCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *
 			return err
 		},
 	}
+}
+
+// now is the clock used by gate; tests replace it.
+var now = time.Now
+
+// stepSummaryLimit is the GitHub step summary size limit (1 MiB, rounded down).
+const stepSummaryLimit = 1_000_000
+
+// gateCmd applies the policy to .shipguard/findings.json, writes the summary
+// and CI outputs, and exits with the decision's code. A missing findings file
+// or an invalid config fails closed with exit 2.
+func gateCmd(g *globals, getenv func(string) string, stdout io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "gate",
+		Short: "Apply the policy to the scan results",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			fail := func(err error) error { return &exitcode.Err{Code: exitcode.Error, Err: err} }
+			if g.mode != "" && g.mode != "enforce" && g.mode != "audit" {
+				return fail(fmt.Errorf("--mode must be enforce or audit, got %q", g.mode))
+			}
+			out := filepath.Join(g.dir, scan.OutDir)
+			res, err := finding.ReadResult(filepath.Join(out, "findings.json"))
+			if err != nil {
+				return fail(fmt.Errorf("%w (run `shipguard scan` first)", err))
+			}
+			cfg, err := gateConfig(g, out)
+			if err != nil {
+				return fail(err)
+			}
+			if g.mode != "" {
+				cfg.Mode = g.mode
+			}
+			var pc platform.Context
+			if len(res.Context) > 0 {
+				if err := json.Unmarshal(res.Context, &pc); err != nil {
+					return fail(fmt.Errorf("parse context in findings.json: %w", err))
+				}
+			}
+			d := policy.Evaluate(res, cfg, pc.Event == platform.EventPR, now())
+
+			if err := report.WriteOutputs(g.dir, d, getenv); err != nil {
+				return fail(err)
+			}
+			if err := os.WriteFile(filepath.Join(out, "summary.md"), []byte(report.Summary(res, d, 0)), 0o644); err != nil {
+				return fail(fmt.Errorf("write summary: %w", err))
+			}
+			if p := getenv("GITHUB_STEP_SUMMARY"); p != "" {
+				if err := report.AppendStepSummary(p, report.Summary(res, d, stepSummaryLimit)); err != nil {
+					return fail(err)
+				}
+			}
+			if _, err := fmt.Fprint(stdout, report.Summary(res, d, 0)); err != nil {
+				return fail(err)
+			}
+			if code := d.ExitCode(); code != exitcode.Pass {
+				return &exitcode.Err{Code: code, Err: fmt.Errorf("gate %s: %d blocking findings, %d scanner errors",
+					d.Result, len(d.Blocking), len(d.ScannerErrors))}
+			}
+			return nil
+		},
+	}
+}
+
+// gateConfig reads the effective config written by scan, falling back to the
+// repository config when scan did not write one.
+func gateConfig(g *globals, out string) (policy.Config, error) {
+	data, err := os.ReadFile(filepath.Join(out, "policy.yaml"))
+	switch {
+	case err == nil:
+		cfg, perr := policy.Parse(data)
+		if perr != nil {
+			return policy.Config{}, fmt.Errorf("policy.yaml: %w", perr)
+		}
+		return cfg, nil
+	case !errors.Is(err, os.ErrNotExist):
+		return policy.Config{}, fmt.Errorf("read policy.yaml: %w", err)
+	}
+	path := g.config
+	if path == "" {
+		path = filepath.Join(g.dir, ".shipguard.yaml")
+	}
+	return policy.Load(path)
 }
 
 func stubCmd(use, short string) *cobra.Command {

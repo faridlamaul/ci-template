@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -36,7 +37,7 @@ func TestUnknownCommandIsError(t *testing.T) {
 }
 
 func TestStubsExitWithError(t *testing.T) {
-	for _, c := range []string{"gate", "report", "run"} {
+	for _, c := range []string{"report", "run"} {
 		var out, errb bytes.Buffer
 		if code := run([]string{c}, envOf(nil), &out, &errb); code != 2 {
 			t.Errorf("%s: exit = %d, want 2", c, code)
@@ -214,5 +215,125 @@ func TestScanConfigErrorsExitTwo(t *testing.T) {
 	}
 	if len(dirs) != 0 {
 		t.Errorf("scanners ran on a config error: %q", dirs)
+	}
+}
+
+// writeGateFixture writes findings.json (and optionally policy.yaml) in dir.
+func writeGateFixture(t *testing.T, dir, event string, runs []finding.ScannerRun, fs []finding.Finding, policyYAML string) {
+	t.Helper()
+	out := filepath.Join(dir, ".shipguard")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res := finding.Result{
+		SchemaVersion: 1,
+		Context:       json.RawMessage(`{"platform":"local","event":"` + event + `"}`),
+		Scanners:      runs, Findings: fs,
+	}
+	if err := finding.WriteResult(filepath.Join(out, "findings.json"), res); err != nil {
+		t.Fatal(err)
+	}
+	if policyYAML != "" {
+		if err := os.WriteFile(filepath.Join(out, "policy.yaml"), []byte(policyYAML), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestGateExitCodes(t *testing.T) {
+	high := finding.Finding{ID: "R1", Category: finding.CategorySAST, Severity: finding.High, File: "a.go", Line: 1,
+		Message: "bad", Fingerprint: "fp1"}
+	newHigh := high
+	newHigh.Status = finding.StatusNew
+	okRun := []finding.ScannerRun{{Name: "opengrep", Category: finding.CategorySAST, Status: "ok"}}
+	errRun := []finding.ScannerRun{{Name: "opengrep", Category: finding.CategorySAST, Status: "error", Error: "boom"}}
+	tests := []struct {
+		name   string
+		event  string
+		runs   []finding.ScannerRun
+		fs     []finding.Finding
+		policy string
+		args   []string
+		want   int
+	}{
+		{"clean passes", "push", okRun, nil, "", nil, 0},
+		{"blocking fails", "push", okRun, []finding.Finding{high}, "", nil, 1},
+		{"scanner error", "push", errRun, nil, "", nil, 2},
+		{"scanner error in audit", "push", errRun, nil, "mode: audit\n", nil, 2},
+		{"audit mode passes", "push", okRun, []finding.Finding{high}, "mode: audit\n", nil, 0},
+		{"mode flag overrides file", "push", okRun, []finding.Finding{high}, "mode: audit\n", []string{"--mode", "enforce"}, 1},
+		{"bad mode flag", "push", okRun, nil, "", []string{"--mode", "bogus"}, 2},
+		{"pr ignores existing", "pr", okRun, []finding.Finding{high}, "", nil, 0},
+		{"pr blocks new", "pr", okRun, []finding.Finding{newHigh}, "", nil, 1},
+		{"invalid policy", "push", okRun, nil, "bogus: true\n", nil, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeGateFixture(t, dir, tt.event, tt.runs, tt.fs, tt.policy)
+			var out, errb bytes.Buffer
+			args := append([]string{"gate", "--dir", dir}, tt.args...)
+			if code := run(args, envOf(nil), &out, &errb); code != tt.want {
+				t.Fatalf("exit = %d, want %d, stderr = %s", code, tt.want, errb.String())
+			}
+			if tt.name == "bad mode flag" || tt.name == "invalid policy" {
+				return
+			}
+			for _, f := range []string{"gate.env", "summary.md"} {
+				if _, err := os.Stat(filepath.Join(dir, ".shipguard", f)); err != nil {
+					t.Errorf("missing %s: %v", f, err)
+				}
+			}
+			if !strings.Contains(out.String(), "shipguard") {
+				t.Errorf("stdout = %q, want the summary", out.String())
+			}
+		})
+	}
+}
+
+func TestGateMissingFindingsFailsClosed(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"gate", "--dir", t.TempDir()}, envOf(nil), &out, &errb); code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "shipguard scan") {
+		t.Errorf("stderr = %q, want a hint to run scan", errb.String())
+	}
+}
+
+func TestGateFallsBackToRepoConfig(t *testing.T) {
+	dir := t.TempDir()
+	high := finding.Finding{ID: "R1", Category: finding.CategorySAST, Severity: finding.High, File: "a.go", Message: "bad"}
+	writeGateFixture(t, dir, "push", nil, []finding.Finding{high}, "")
+	cfg := filepath.Join(t.TempDir(), "custom.yaml")
+	if err := os.WriteFile(cfg, []byte("mode: audit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"gate", "--dir", dir, "--config", cfg}, envOf(nil), &out, &errb); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+}
+
+func TestGateStepSummaryAndGitHubOutput(t *testing.T) {
+	dir := t.TempDir()
+	high := finding.Finding{ID: "R1", Category: finding.CategorySAST, Severity: finding.High, File: "a.go", Message: "bad"}
+	writeGateFixture(t, dir, "push", nil, []finding.Finding{high}, "")
+	tmp := t.TempDir()
+	env := envOf(map[string]string{
+		"GITHUB_STEP_SUMMARY": filepath.Join(tmp, "step.md"),
+		"GITHUB_OUTPUT":       filepath.Join(tmp, "out.txt"),
+	})
+	var out, errb bytes.Buffer
+	if code := run([]string{"gate", "--dir", dir}, env, &out, &errb); code != 1 {
+		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
+	}
+	step, _ := os.ReadFile(filepath.Join(tmp, "step.md"))
+	if !strings.Contains(string(step), "R1") {
+		t.Errorf("step summary = %q", step)
+	}
+	o, _ := os.ReadFile(filepath.Join(tmp, "out.txt"))
+	if !strings.Contains(string(o), "result=fail") {
+		t.Errorf("GITHUB_OUTPUT = %q", o)
 	}
 }
