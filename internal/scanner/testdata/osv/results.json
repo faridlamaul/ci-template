@@ -1,0 +1,250 @@
+{
+  "results": [
+    {
+      "source": {
+        "path": "/src/requirements.txt",
+        "type": "lockfile"
+      },
+      "packages": [
+        {
+          "package": {
+            "name": "flask",
+            "version": "0.12.2",
+            "ecosystem": "PyPI"
+          },
+          "vulnerabilities": [
+            {
+              "id": "PYSEC-2018-66",
+              "aliases": [
+                "CVE-2018-1000656",
+                "GHSA-562c-5r94-xh97"
+              ],
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "PyPI",
+                    "name": "flask",
+                    "purl": "pkg:pypi/flask"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.12.3"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "GHSA-562c-5r94-xh97",
+              "aliases": [
+                "CVE-2018-1000656",
+                "PYSEC-2018-66"
+              ],
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "PyPI",
+                    "name": "flask",
+                    "purl": "pkg:pypi/flask"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "0.12.3"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "PYSEC-2018-66",
+                "GHSA-562c-5r94-xh97"
+              ],
+              "aliases": [
+                "CVE-2018-1000656",
+                "GHSA-562c-5r94-xh97",
+                "PYSEC-2018-66"
+              ],
+              "max_severity": "8.7"
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "pycrypto",
+            "version": "2.6.1",
+            "ecosystem": "PyPI"
+          },
+          "vulnerabilities": [
+            {
+              "id": "PYSEC-2017-94",
+              "aliases": [
+                "CVE-2013-7459",
+                "GHSA-cq27-v7xp-c356"
+              ],
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "PyPI",
+                    "name": "pycrypto",
+                    "purl": "pkg:pypi/pycrypto"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "fixed": "8dbe0dc3eea5c689d4f76b37b93fe216cf1f00d4"
+                        }
+                      ],
+                      "repo": "https://github.com/dlitz/pycrypto",
+                      "type": "GIT"
+                    },
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "PYSEC-2018-97",
+              "aliases": [
+                "CVE-2018-6594",
+                "GHSA-6528-wvf6-f6qg"
+              ],
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "PyPI",
+                    "name": "pycrypto",
+                    "purl": "pkg:pypi/pycrypto"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "GHSA-6528-wvf6-f6qg",
+              "aliases": [
+                "CVE-2018-6594",
+                "PYSEC-2018-97"
+              ],
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "PyPI",
+                    "name": "pycrypto",
+                    "purl": "pkg:pypi/pycrypto"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "last_affected": "2.6.1"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "GHSA-cq27-v7xp-c356",
+              "aliases": [
+                "CVE-2013-7459",
+                "PYSEC-2017-94"
+              ],
+              "affected": [
+                {
+                  "package": {
+                    "ecosystem": "PyPI",
+                    "name": "pycrypto",
+                    "purl": "pkg:pypi/pycrypto"
+                  },
+                  "ranges": [
+                    {
+                      "events": [
+                        {
+                          "introduced": "0"
+                        },
+                        {
+                          "last_affected": "2.6.1"
+                        }
+                      ],
+                      "type": "ECOSYSTEM"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "ids": [
+                "PYSEC-2017-94",
+                "GHSA-cq27-v7xp-c356"
+              ],
+              "aliases": [
+                "CVE-2013-7459",
+                "GHSA-cq27-v7xp-c356",
+                "PYSEC-2017-94"
+              ],
+              "max_severity": "9.8"
+            },
+            {
+              "ids": [
+                "PYSEC-2018-97",
+                "GHSA-6528-wvf6-f6qg"
+              ],
+              "aliases": [
+                "CVE-2018-6594",
+                "GHSA-6528-wvf6-f6qg",
+                "PYSEC-2018-97"
+              ],
+              "max_severity": "8.7"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

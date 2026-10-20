@@ -39,8 +39,12 @@ func ExecRunner() Runner {
 }
 
 // Retry calls fn up to attempts times, sleeping 1s, 2s, 4s, ... between
-// attempts. It stops early when ctx is done and returns the last error.
+// attempts (at least once, even when attempts <= 0). It stops early when ctx
+// is done, including during the sleep, and returns the last error.
 func Retry(ctx context.Context, attempts int, sleep func(time.Duration), fn func() error) error {
+	if attempts < 1 {
+		attempts = 1
+	}
 	var err error
 	delay := time.Second
 	for i := 0; i < attempts; i++ {
@@ -51,6 +55,9 @@ func Retry(ctx context.Context, attempts int, sleep func(time.Duration), fn func
 			return err
 		}
 		sleep(delay)
+		if ctx.Err() != nil {
+			return err
+		}
 		delay *= 2
 	}
 	return err

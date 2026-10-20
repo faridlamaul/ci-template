@@ -240,3 +240,28 @@ func TestExecRunner(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestRetryNonPositiveAttemptsCallsOnce(t *testing.T) {
+	for _, n := range []int{0, -3} {
+		calls := 0
+		err := Retry(context.Background(), n, func(time.Duration) { t.Fatal("must not sleep") }, func() error {
+			calls++
+			return errors.New("boom")
+		})
+		if calls != 1 || err == nil {
+			t.Fatalf("attempts=%d: calls=%d err=%v", n, calls, err)
+		}
+	}
+}
+
+func TestRetryStopsWhenContextDoneDuringSleep(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	err := Retry(ctx, 5, func(time.Duration) { cancel() }, func() error {
+		calls++
+		return errors.New("boom")
+	})
+	if calls != 1 || err == nil {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}
