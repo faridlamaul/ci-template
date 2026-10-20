@@ -1,0 +1,26 @@
+# Bitbucket pipe metadata. The release renders __SHIPGUARD_VERSION__.
+# Consumers usually reference the image directly:
+#   pipe: docker://ghcr.io/faridlamaul/shipguard:<version>
+name: shipguard
+image: ghcr.io/faridlamaul/shipguard:__SHIPGUARD_VERSION__
+category: Security
+description: Scan for secrets, code flaws, vulnerable dependencies, IaC misconfigurations and denied licenses, gate on new findings, and post a Code Insights report.
+repository: https://github.com/faridlamaul/shipguard
+maintainer:
+  name: faridlamaul
+  website: https://github.com/faridlamaul
+variables:
+  - name: SCANNERS
+    default: all
+  - name: MODE
+    default: ""
+  - name: CONFIG
+    default: .shipguard.yaml
+  - name: CODE_INSIGHTS
+    default: "true"
+tags:
+  - security
+  - sast
+  - sca
+  - secrets
+  - iac

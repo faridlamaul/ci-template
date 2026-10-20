@@ -1,0 +1,42 @@
+# Test pipeline for the Bitbucket test repository (Task 20, V1-V3).
+# Copy it to the repository root together with testdata/fixtures/python/.
+# __SHIPGUARD_IMAGE__ is replaced with the image under test (tag), and
+# __SHIPGUARD_IMAGE_DIGEST__ with the same image pinned by digest.
+#
+# Expected: the fixture has findings, so enforce steps fail with exit 1 and a
+# "shipguard" Code Insights report appears on the commit.
+clone:
+  depth: 1 # shallow on purpose: PR and schedule runs must unshallow (V2)
+
+pipelines:
+  default:
+    - step:
+        name: shipguard (push, tag)
+        script:
+          - pipe: docker://__SHIPGUARD_IMAGE__
+            variables:
+              MODE: enforce
+  pull-requests:
+    "**":
+      - step:
+          name: shipguard (pull request)
+          script:
+            - pipe: docker://__SHIPGUARD_IMAGE__
+              variables:
+                MODE: enforce
+  custom:
+    digest:
+      - step:
+          name: shipguard (digest pin, V1)
+          script:
+            - pipe: docker://__SHIPGUARD_IMAGE_DIGEST__
+              variables:
+                MODE: audit
+    schedule:
+      - step:
+          name: shipguard (schedule, unshallow V2)
+          script:
+            - pipe: docker://__SHIPGUARD_IMAGE__
+              variables:
+                MODE: audit
+                SHIPGUARD_EVENT: schedule
