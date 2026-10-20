@@ -12,5 +12,11 @@ fn good() {
     let db_password = std::env::var("DB_PASSWORD").unwrap_or_default();
     // ok: shipguard.rust.hardcoded-credentials
     let token_header = "";
-    let _ = (db_password, token_header);
+    // ok: shipguard.rust.hardcoded-credentials
+    let token_url = "https://auth.example.com/token";
+    // ok: shipguard.rust.hardcoded-credentials
+    let password_prompt = "Enter your password now";
+    // ok: shipguard.rust.hardcoded-credentials
+    let secret_name = "db-credentials";
+    let _ = (db_password, token_header, token_url, password_prompt, secret_name);
 }

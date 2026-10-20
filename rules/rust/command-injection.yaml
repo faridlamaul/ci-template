@@ -15,12 +15,27 @@ rules:
           - pattern: Command::new("/bin/bash").arg("-c").arg($CMD)
           - pattern: Command::new("sh").args(["-c", $CMD])
           - pattern: Command::new("bash").args(["-c", $CMD])
+          - pattern: Command::new("sh").args(&["-c", $CMD])
+          - pattern: Command::new("bash").args(&["-c", $CMD])
           - pattern: Command::new("cmd").args(["/C", $CMD])
+          - pattern: Command::new("cmd").args(&["/C", $CMD])
           - pattern: Command::new("cmd").arg("/C").arg($CMD)
+          - patterns:
+              - pattern: $C.arg("-c").arg($CMD)
+              - pattern-inside: |
+                  let mut $C = Command::new("sh");
+                  ...
+          - patterns:
+              - pattern: $C.arg("-c").arg($CMD)
+              - pattern-inside: |
+                  let mut $C = Command::new("bash");
+                  ...
       - pattern-not: Command::new($SH).arg("-c").arg("...")
       - pattern-not: Command::new($SH).args(["-c", "..."])
+      - pattern-not: Command::new($SH).args(&["-c", "..."])
       - pattern-not: Command::new($SH).args(["/C", "..."])
       - pattern-not: Command::new($SH).arg("/C").arg("...")
+      - pattern-not: $C.arg("-c").arg("...")
     metadata:
       category: security
       cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
