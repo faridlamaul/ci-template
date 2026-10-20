@@ -228,22 +228,86 @@ func normVersion(v string) string {
 // any osv-scanner.toml in the repository (R-C2).
 const osvConfig = ""
 
-func (o *osv) args(output, config string) []string {
+// osvExcludes returns the --x-exclude values for the directory-shaped
+// excludes (osv-scanner 2.7.0). A plain value is a directory path relative to
+// the scan root, matched exactly. A "g:" glob is matched against the path
+// from the filesystem root, so a rooted glob cannot be written: a "**/X/**"
+// exclude becomes "g:**/X" and any other glob is left to the findings filter.
+// File-shaped excludes are left to the findings filter too.
+func osvExcludes(exclude []string) []string {
+	var out []string
+	for _, e := range exclude {
+		var v string
+		switch {
+		case strings.HasSuffix(e, "/**"):
+			if d := strings.TrimSuffix(e, "/**"); strings.HasPrefix(d, "**/") && !strings.ContainsAny(d[3:], "*?[{\\") {
+				v = "g:" + d
+			}
+		case strings.HasSuffix(e, "/"):
+			if d := strings.TrimSuffix(e, "/"); d != "" && !strings.ContainsAny(d, "*?[{\\") {
+				v = d
+			}
+		}
+		if v != "" && !slices.Contains(out, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (o *osv) args(output, config string, exclude []string) []string {
 	// --output-file replaces the deprecated --output (osv-scanner v2.7.0).
 	// Policy lives only in .shipguard.yaml (R-C2): --config overrides every
 	// osv-scanner.toml, and --no-ignore stops .gitignore from hiding
-	// lockfiles; shipguard's excludes are applied to the findings.
+	// lockfiles; directory excludes keep osv-scanner out of those trees and
+	// all excludes are applied to the findings.
 	a := []string{"scan", "source", "-r", "--format", "json", "--output-file", output, "--config", config, "--no-ignore"}
 	if db := os.Getenv("SHIPGUARD_OSV_OFFLINE_DB"); db != "" {
 		a = append(a, "--offline-vulnerabilities", "--local-db-path", db)
 	}
+	for _, e := range osvExcludes(exclude) {
+		a = append(a, "--x-exclude", e)
+	}
 	return append(a, ".")
 }
 
+var osvExtractErr = regexp.MustCompile(`^(?:Error during extraction: \([^)]*\))?\s*(.+?): could not extract`)
+
 // osvExtractionFailed reports whether osv-scanner could not parse a manifest
-// or lockfile. It says so only on stderr and still exits 0, 1 or 128.
-func osvExtractionFailed(stderr []byte) bool {
-	return bytes.Contains(stderr, []byte("Error during extraction")) || bytes.Contains(stderr, []byte("could not extract"))
+// or lockfile outside the excluded paths. It says so only on stderr and still
+// exits 0, 1 or 128. Failures in excluded paths (osv-scanner may still walk
+// them, for instance behind a file-shaped exclude) are ignored; a failure
+// whose path cannot be determined or lies outside dir counts, so it fails
+// closed.
+func osvExtractionFailed(stderr []byte, dir string, exclude []string) bool {
+	if !bytes.Contains(stderr, []byte("Error during extraction")) && !bytes.Contains(stderr, []byte("could not extract")) {
+		return false
+	}
+	// osv-scanner walks from "/", so it prints paths without the leading slash.
+	prefixes := []string{strings.TrimPrefix(filepath.ToSlash(filepath.Clean(dir)), "/") + "/"}
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		prefixes = append(prefixes, strings.TrimPrefix(filepath.ToSlash(real), "/")+"/")
+	}
+	found := false
+	for _, line := range strings.Split(string(stderr), "\n") {
+		m := osvExtractErr.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			continue
+		}
+		found = true
+		rel, inside := "", false
+		for _, p := range prefixes {
+			if r, ok := strings.CutPrefix(m[1], p); ok {
+				rel, inside = r, true
+				break
+			}
+		}
+		if !inside || len(finding.FilterPaths([]finding.Finding{{File: rel}}, exclude)) > 0 {
+			return true
+		}
+	}
+	// "Error during extraction" without a path we could parse.
+	return !found
 }
 
 func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
@@ -270,14 +334,14 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 	err = Retry(ctx, 3, osvSleep, func() error {
 		// Stderr is only inspected, never surfaced: it can echo paths and
 		// package names.
-		_, stderr, code, err := o.run(ctx, t.Dir, "osv-scanner", o.args(output, config)...)
+		_, stderr, code, err := o.run(ctx, t.Dir, "osv-scanner", o.args(output, config, t.Exclude)...)
 		if err != nil {
 			return fmt.Errorf("osv-scanner: %w", err)
 		}
 		switch code {
 		case 0, 1, 128:
 			// Deterministic, so not retried.
-			extractFailed = osvExtractionFailed(stderr)
+			extractFailed = osvExtractionFailed(stderr, t.Dir, t.Exclude)
 			noPackages = code == 128
 			return nil
 		}
@@ -287,7 +351,7 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 		return nil, err
 	}
 	if extractFailed {
-		return nil, errors.New("osv-scanner could not extract one or more manifests or lockfiles; fix or exclude them")
+		return nil, errors.New("osv-scanner could not extract one or more manifests or lockfiles; fix them or add their directory to paths.exclude")
 	}
 
 	fs := []finding.Finding{}

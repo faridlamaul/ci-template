@@ -365,3 +365,80 @@ func TestOSVEmptyOutputIsError(t *testing.T) {
 		t.Fatal("want error when the tool wrote no output")
 	}
 }
+
+// osvExtractionRunner reports the given stderr with exit code 0 and an empty
+// report, and records its arguments.
+func osvExtractionRunner(t *testing.T, stderr string, args *[]string) Runner {
+	return func(ctx context.Context, d, name string, a ...string) ([]byte, []byte, int, error) {
+		if args != nil {
+			*args = a
+		}
+		if out := argAfter(a, "--output-file"); out != "" {
+			if err := os.WriteFile(out, []byte(`{"results":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil, []byte(stderr), 0, nil
+	}
+}
+
+// TestOSVPassesDirectoryExcludes: osv-scanner 2.7.0 walks everything, so the
+// directory-shaped excludes go to --x-exclude. A plain value is a path
+// relative to the scan root; "g:" is a glob matched against the full path, so
+// rooted globs cannot be expressed and **/X/** becomes g:**/X. File-shaped
+// excludes are left to the findings filter.
+func TestOSVPassesDirectoryExcludes(t *testing.T) {
+	var args []string
+	run := osvExtractionRunner(t, "", &args)
+	_, err := NewOSV(run).Scan(context.Background(), Target{
+		Dir: t.TempDir(), RawDir: t.TempDir(),
+		Exclude: []string{"vendor/", "a/b/", "**/testdata/**", "*.gen.lock", "go.sum", ".shipguard-cache/", "**/node_modules/**", "docs/*/x/**"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for i, a := range args {
+		if a == "--x-exclude" {
+			got = append(got, args[i+1])
+		}
+	}
+	want := []string{"vendor", "a/b", "g:**/testdata", ".shipguard-cache", "g:**/node_modules"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("--x-exclude = %v, want %v (args %v)", got, want, args)
+	}
+	if args[len(args)-1] != "." {
+		t.Fatalf("args %v must end with the scan root", args)
+	}
+}
+
+func TestOSVExtractionErrorInExcludedPathIsIgnored(t *testing.T) {
+	noSleep(t)
+	dir := t.TempDir()
+	root := strings.TrimPrefix(dir, "/")
+	line := func(p string) string { return "\t" + root + "/" + p + ": could not extract: invalid character 'b'\n" }
+	head := "Scanning dir .\nError during extraction: (extracting as javascript/packagelockjson)\n"
+	ex := []string{"testdata/", "**/fixtures/**"}
+	cases := []struct {
+		name, stderr string
+		wantErr      bool
+	}{
+		{"excluded only", head + line("testdata/package-lock.json") + line("a/fixtures/x/package-lock.json"), false},
+		{"excluded on the header line", "Error during extraction: (extracting as javascript/packagelockjson) " + root + "/testdata/package-lock.json: could not extract: bad\n", false},
+		{"one not excluded", head + line("testdata/package-lock.json") + line("web/package-lock.json"), true},
+		{"not excluded", head + line("package-lock.json"), true},
+		{"outside the scan dir", head + "\tother/testdata/package-lock.json: could not extract: bad\n", true},
+		{"no parsable path", "Error during extraction: something else\n", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs, err := NewOSV(osvExtractionRunner(t, c.stderr, nil)).Scan(context.Background(), Target{Dir: dir, RawDir: t.TempDir(), Exclude: ex})
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, c.wantErr)
+			}
+			if err != nil && (fs != nil || strings.Contains(err.Error(), "package-lock") || strings.Contains(err.Error(), "invalid character")) {
+				t.Fatalf("fs=%v err=%v", fs, err)
+			}
+		})
+	}
+}
