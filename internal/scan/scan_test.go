@@ -344,6 +344,43 @@ func TestScanPRBitbucketUnshallows(t *testing.T) {
 	}
 }
 
+func TestScanScheduleBitbucketUnshallows(t *testing.T) {
+	dir, _ := shallowClone(t)
+	runScan(t, Options{Dir: dir, Ctx: platform.Context{Platform: "bitbucket", Event: platform.EventSchedule}})
+	if isShallow(t, dir) {
+		t.Fatal("still shallow after a Bitbucket scheduled scan")
+	}
+}
+
+// TestScanShallowFailsClosed: a PR or scheduled scan of a shallow clone would
+// miss history, so outside Bitbucket (which cannot set the clone depth for a
+// pipe) it is a configuration error naming the setting to change.
+func TestScanShallowFailsClosed(t *testing.T) {
+	cases := []platform.Context{
+		{Platform: "github", Event: platform.EventPR, BaseRef: "main"},
+		{Platform: "gitlab", Event: platform.EventPR, BaseRef: "main"},
+		{Platform: "github", Event: platform.EventSchedule},
+		{Platform: "gitlab", Event: platform.EventSchedule},
+		{Platform: "local", Event: platform.EventSchedule},
+	}
+	for _, pc := range cases {
+		dir, _ := shallowClone(t, "--no-single-branch")
+		_, _, err := Run(context.Background(), Options{Dir: dir, Ctx: pc, Categories: allCats(), Now: fixedNow})
+		if err == nil || !strings.Contains(err.Error(), "fetch-depth: 0") || !strings.Contains(err.Error(), "GIT_DEPTH: 0") {
+			t.Errorf("%s %s: err = %v, want a shallow-clone error naming fetch-depth: 0 and GIT_DEPTH: 0", pc.Platform, pc.Event, err)
+		}
+		if !isShallow(t, dir) {
+			t.Errorf("%s %s: clone was unshallowed", pc.Platform, pc.Event)
+		}
+	}
+	// A push scan only reads the work tree: a shallow clone is fine.
+	dir, _ := shallowClone(t)
+	runScan(t, Options{Dir: dir, Ctx: platform.Context{Platform: "github", Event: platform.EventPush}})
+}
+
+// TestScanPRHeadIsBaseFailsClosed: with HEAD at (or behind) the base, a PR
+// scan would compare the base with itself and pass; pull_request_target
+// checks out the base by default.
 func TestScanPRHeadIsBaseFailsClosed(t *testing.T) {
 	isolate(t)
 	r := gitfixture.New(t)

@@ -119,19 +119,13 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 	}
 	pr := o.Ctx.Event == platform.EventPR
 
+	if pr || o.Ctx.Event == platform.EventSchedule {
+		if err := fullHistory(o.Dir, o.Ctx.Platform); err != nil {
+			return finding.Result{}, policy.Config{}, err
+		}
+	}
 	var baseSHA string
 	if pr {
-		if o.Ctx.Platform == "bitbucket" {
-			shallow, err := gitx.IsShallow(o.Dir)
-			if err != nil {
-				return finding.Result{}, policy.Config{}, err
-			}
-			if shallow {
-				if err := gitx.Unshallow(o.Dir); err != nil {
-					return finding.Result{}, policy.Config{}, err
-				}
-			}
-		}
 		var err error
 		if baseSHA, err = gitx.ResolveRef(o.Dir, o.Ctx.BaseRef); err != nil {
 			return finding.Result{}, policy.Config{}, err
@@ -239,6 +233,22 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		return finding.Result{}, policy.Config{}, err
 	}
 	return res, cfg, nil
+}
+
+// fullHistory makes sure a PR or scheduled scan sees the whole history: a
+// shallow clone would hide commits from the secrets scan and may lack the
+// base. Bitbucket pipes cannot set the clone depth, so there it is
+// unshallowed; elsewhere it is a configuration error.
+func fullHistory(dir, plat string) error {
+	shallow, err := gitx.IsShallow(dir)
+	if err != nil || !shallow {
+		return err
+	}
+	if plat == "bitbucket" {
+		return gitx.Unshallow(dir)
+	}
+	return fmt.Errorf("%w: shallow clone: PR and scheduled scans need the full git history; "+
+		"set fetch-depth: 0 on actions/checkout (GitHub) or GIT_DEPTH: 0 (GitLab)", policy.ErrConfig)
 }
 
 // markExisting scans the base revision in a worktree with every head scanner
