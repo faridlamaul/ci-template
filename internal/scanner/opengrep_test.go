@@ -92,7 +92,8 @@ func TestOpengrepArgsIncludeConsumerRules(t *testing.T) {
 	want := []string{
 		"scan", "--json", "--output", args[3],
 		"--config", "/opt/shipguard/rules", "--config", "rules/a.yml", "--config", "rules/b.yml",
-		"--exclude", "vendor", "--exclude", "*.gen.go", ".",
+		"--exclude", "vendor", "--exclude", "*.gen.go",
+		"--disable-nosem", "--x-ignore-semgrepignore-files", ".",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %v\nwant   %v", args, want)

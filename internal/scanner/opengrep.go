@@ -191,6 +191,12 @@ func (o *opengrep) args(t Target, output string) []string {
 	for _, e := range t.Exclude {
 		a = append(a, "--exclude", e)
 	}
+	// Policy lives only in .shipguard.yaml (R-C2): nosem/nosemgrep/noopengrep
+	// comments and .semgrepignore files in the repository are not honoured.
+	// --x-ignore-semgrepignore-files is opengrep's (v1.31.0) only switch for
+	// that; it also drops opengrep's built-in default ignore list, so only
+	// shipguard's excludes above apply. .gitignore cannot hide tracked files.
+	a = append(a, "--disable-nosem", "--x-ignore-semgrepignore-files")
 	// opengrep has no --metrics flag (v1.31.0) and sends no telemetry.
 	return append(a, ".")
 }
