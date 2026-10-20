@@ -5,6 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
 )
@@ -63,6 +69,74 @@ func ParseOpengrep(raw []byte) ([]finding.Finding, error) {
 }
 
 func parseOpengrep(raw []byte, dir string) ([]finding.Finding, error) {
+	return parseOpengrepRules(raw, dir, nil, nil)
+}
+
+// ruleIDs returns the ids declared in the rule files under the given config
+// paths (files or directories). Unreadable or malformed files are skipped:
+// opengrep itself reports invalid rule files.
+func ruleIDs(dir string, configs []string) []string {
+	var ids []string
+	read := func(path string) {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return
+		}
+		var doc struct {
+			Rules []struct {
+				ID string `yaml:"id"`
+			} `yaml:"rules"`
+		}
+		if yaml.Unmarshal(b, &doc) != nil {
+			return
+		}
+		for _, r := range doc.Rules {
+			if r.ID != "" {
+				ids = append(ids, r.ID)
+			}
+		}
+	}
+	for _, c := range configs {
+		if !filepath.IsAbs(c) {
+			c = filepath.Join(dir, c)
+		}
+		st, err := os.Stat(c)
+		if err != nil {
+			continue
+		}
+		if !st.IsDir() {
+			read(c)
+			continue
+		}
+		_ = filepath.WalkDir(c, func(p string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && (strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml")) {
+				read(p)
+			}
+			return nil
+		})
+	}
+	sort.Slice(ids, func(i, j int) bool { return len(ids[i]) > len(ids[j]) })
+	return ids
+}
+
+// normalizeCheckID undoes the prefix opengrep adds to every check_id: the
+// dotted path of the directory that holds the rule file (for example
+// "opt.shipguard.rules.go." for --config /opt/shipguard/rules). The rule's own
+// id is recovered from the known ids; the first "shipguard." segment is the
+// fallback for built-in rules.
+func normalizeCheckID(id string, known []string) string {
+	for _, k := range known {
+		if id == k || strings.HasSuffix(id, "."+k) {
+			return k
+		}
+	}
+	if i := strings.Index(id, "shipguard."); i > 0 && id[i-1] == '.' {
+		return id[i:]
+	}
+	return id
+}
+
+func parseOpengrepRules(raw []byte, dir string, known, disabled []string) ([]finding.Finding, error) {
 	var rep opengrepReport
 	if err := json.Unmarshal(raw, &rep); err != nil {
 		return nil, fmt.Errorf("parse opengrep report: %w", err)
@@ -78,16 +152,20 @@ func parseOpengrep(raw []byte, dir string) ([]finding.Finding, error) {
 		if err != nil {
 			return nil, fmt.Errorf("opengrep result %s: %w", r.CheckID, err)
 		}
+		id := normalizeCheckID(r.CheckID, known)
+		if slices.Contains(disabled, id) {
+			continue
+		}
 		file := relFile(r.Path, dir)
 		out = append(out, finding.Finding{
-			ID:          r.CheckID,
+			ID:          id,
 			Scanner:     "opengrep",
 			Category:    finding.CategorySAST,
 			Severity:    sev,
 			File:        file,
 			Line:        r.Start.Line,
 			Message:     r.Extra.Message,
-			Fingerprint: finding.Fingerprint(r.CheckID, file, finding.NormalizeSnippet(r.Extra.Lines)),
+			Fingerprint: finding.Fingerprint(id, file, finding.NormalizeSnippet(r.Extra.Lines)),
 		})
 	}
 	return out, nil
@@ -107,9 +185,9 @@ func (o *opengrep) args(t Target, output string) []string {
 	for _, r := range t.Rules {
 		a = append(a, "--config", r)
 	}
-	for _, r := range t.DisableRules {
-		a = append(a, "--exclude-rule", r)
-	}
+	// --exclude-rule is not used: it needs the prefixed check_id opengrep
+	// derives from the config path, so disabled rules are filtered by bare
+	// id after parsing.
 	for _, e := range t.Exclude {
 		a = append(a, "--exclude", e)
 	}
@@ -141,7 +219,8 @@ func (o *opengrep) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 	if err != nil {
 		return nil, fmt.Errorf("read opengrep output: %w", err)
 	}
-	fs, err := parseOpengrep(raw, t.Dir)
+	known := ruleIDs(t.Dir, append([]string{o.builtinRules}, t.Rules...))
+	fs, err := parseOpengrepRules(raw, t.Dir, known, t.DisableRules)
 	if err != nil {
 		return nil, err
 	}

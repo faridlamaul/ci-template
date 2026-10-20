@@ -92,7 +92,6 @@ func TestOpengrepArgsIncludeConsumerRules(t *testing.T) {
 	want := []string{
 		"scan", "--json", "--output", args[3],
 		"--config", "/opt/shipguard/rules", "--config", "rules/a.yml", "--config", "rules/b.yml",
-		"--exclude-rule", "r.one", "--exclude-rule", "r.two",
 		"--exclude", "vendor", "--exclude", "*.gen.go", ".",
 	}
 	if !reflect.DeepEqual(args, want) {
@@ -183,5 +182,60 @@ func TestOpengrepRawHasNoSourceLines(t *testing.T) {
 	}
 	if within(dir, out) || within(raw, out) {
 		t.Fatalf("output %s is inside Dir or RawDir", out)
+	}
+}
+
+// prefixed.json is real `opengrep scan --config <dir>` output (v1.31.0): the
+// check_id carries the dotted config directory path before the rule id.
+func TestOpengrepStripsConfigPrefixFromCheckID(t *testing.T) {
+	rules := t.TempDir()
+	rule := "rules:\n  - id: shipguard.python.unsafe-deserialization\n    languages: [python]\n    severity: ERROR\n    message: m\n    pattern: pickle.loads(...)\n"
+	if err := os.WriteFile(filepath.Join(rules, "r.yaml"), []byte(rule), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewOpengrep(outputRunner(t, ogGolden(t, "prefixed.json"), 1, nil), rules)
+	fs, err := s.Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: t.TempDir()})
+	if err != nil || len(fs) != 1 {
+		t.Fatalf("fs=%v err=%v", fs, err)
+	}
+	if fs[0].ID != "shipguard.python.unsafe-deserialization" {
+		t.Fatalf("id = %q", fs[0].ID)
+	}
+	// Fallback without readable rule files: cut to the shipguard. segment.
+	s = NewOpengrep(outputRunner(t, ogGolden(t, "prefixed.json"), 1, nil), "/nonexistent")
+	fs, err = s.Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: t.TempDir()})
+	if err != nil || len(fs) != 1 || fs[0].ID != "shipguard.python.unsafe-deserialization" {
+		t.Fatalf("fallback: fs=%v err=%v", fs, err)
+	}
+}
+
+func TestOpengrepDisableRulesUseBareIDs(t *testing.T) {
+	var args []string
+	s := NewOpengrep(outputRunner(t, ogGolden(t, "prefixed.json"), 1, &args), "/nonexistent")
+	fs, err := s.Scan(context.Background(), Target{
+		Dir: t.TempDir(), RawDir: t.TempDir(),
+		DisableRules: []string{"shipguard.python.unsafe-deserialization"},
+	})
+	if err != nil || len(fs) != 0 {
+		t.Fatalf("fs=%v err=%v", fs, err)
+	}
+	for _, a := range args {
+		if a == "--exclude-rule" {
+			t.Fatalf("--exclude-rule must not be passed: %v", args)
+		}
+	}
+}
+
+func TestNormalizeCheckIDConsumerRules(t *testing.T) {
+	known := []string{"team.no-eval", "no-eval"}
+	for in, want := range map[string]string{
+		"rules.team.no-eval":                       "team.no-eval",
+		"a.b.rules.sub.no-eval":                    "no-eval",
+		"opt.shipguard.rules.go.shipguard.go.ssrf": "shipguard.go.ssrf",
+		"plain": "plain",
+	} {
+		if got := normalizeCheckID(in, known); got != want {
+			t.Errorf("%q -> %q want %q", in, got, want)
+		}
 	}
 }
