@@ -122,7 +122,7 @@ func ruleIDs(dir string, configs []string) []string {
 // normalizeCheckID undoes the prefix opengrep adds to every check_id: the
 // dotted path of the directory that holds the rule file (for example
 // "opt.shipguard.rules.go." for --config /opt/shipguard/rules). The rule's own
-// id is recovered from the known ids; the first "shipguard." segment is the
+// id is recovered from the known ids; the last "shipguard." segment is the
 // fallback for built-in rules.
 func normalizeCheckID(id string, known []string) string {
 	for _, k := range known {
@@ -130,7 +130,7 @@ func normalizeCheckID(id string, known []string) string {
 			return k
 		}
 	}
-	if i := strings.Index(id, "shipguard."); i > 0 && id[i-1] == '.' {
+	if i := strings.LastIndex(id, "shipguard."); i > 0 && id[i-1] == '.' {
 		return id[i:]
 	}
 	return id
