@@ -289,8 +289,9 @@ func TestCodeInsightsProxyDefault(t *testing.T) {
 		want string
 	}{
 		{"step", map[string]string{}, "http://localhost:29418"},
-		{"pipe", map[string]string{"BITBUCKET_PIPE_STORAGE_DIR": "/opt/atlassian/pipelines/agent/build/.bitbucket/pipelines/generated/pipeline/pipes/x"}, "http://host.docker.internal:29418"},
-		{"override wins in pipe", map[string]string{"BITBUCKET_PIPE_STORAGE_DIR": "/x", "SHIPGUARD_BITBUCKET_PROXY": "http://p:1"}, "http://p:1"},
+		{"pipe", map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "BITBUCKET_PIPE_STORAGE_DIR": "/opt/atlassian/pipelines/agent/build/.bitbucket/pipelines/generated/pipeline/pipes/x"}, "http://host.docker.internal:29418"},
+		{"not bitbucket", map[string]string{"BITBUCKET_PIPE_STORAGE_DIR": "/x"}, "http://localhost:29418"},
+		{"override wins in pipe", map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "BITBUCKET_PIPE_STORAGE_DIR": "/x", "SHIPGUARD_BITBUCKET_PROXY": "http://p:1"}, "http://p:1"},
 		{"none", map[string]string{"BITBUCKET_PIPE_STORAGE_DIR": "/x", "SHIPGUARD_BITBUCKET_PROXY": "none"}, ""},
 	}
 	for _, tc := range cases {

@@ -67,7 +67,7 @@ func codeInsightsFromEnv(pc platform.Context, getenv func(string) string) CodeIn
 	switch proxy {
 	case "":
 		proxy = defaultBitbucketProxy
-		if getenv("BITBUCKET_PIPE_STORAGE_DIR") != "" {
+		if platform.BitbucketPipe(getenv) {
 			proxy = platform.BitbucketPipeProxy
 		}
 	case "none":
