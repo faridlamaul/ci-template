@@ -9,7 +9,7 @@ Results of the verification items in spec §10 and §12.
 | V3 | pending (Bitbucket access) |
 | V4 | done: see below |
 | V5 | done in Task 16: opengrep 1.31.0 ships musllinux x86_64 and aarch64; the image is multi-arch on Alpine |
-| V6 | pending (gitlab.com test project) |
+| V6 | done: see below |
 | V7 | done: see below |
 
 ## V4: does osv-scanner support `bun.lock`?
@@ -24,6 +24,21 @@ Results of the verification items in spec §10 and §12.
 **Result.** osv-scanner 2.7.0 supports `bun.lock`.
 
 **Chosen path.** No change is needed. Spec §4.1 lists `bun.lock` for Node SCA, and the docs mark it as supported. The legacy binary `bun.lockb` was not tested and is not claimed.
+
+## V6: does `include: remote` from gitlab.com raw work with `inputs` and `integrity`?
+
+**Method.**
+- In the public publish project `gitlab.com/faridlamaul/shipguard`, branch `spike/v6` (since deleted), add a template `templates/v6.yml` with a `spec: inputs: greeting` header.
+- In the private consumer project `gitlab.com/faridlamaul/shipguard-include-test`, include it with `include: remote: https://gitlab.com/faridlamaul/shipguard/-/raw/spike/v6/templates/v6.yml`, `integrity: sha256-<base64 of the SHA-256 of the raw file>` and `inputs: {greeting: from-include-test}`.
+
+**Evidence.**
+- Pipeline 2968541095 on 2026-10-20 succeeded. The job log shows `greeting=from-include-test`, so the input was interpolated.
+- The integrity hash computed locally matches the hash of the bytes served by the raw URL.
+- `glab ci lint` with a changed integrity value fails: "Remote file … failed integrity check!"
+
+**Result.** `include: remote` from a public gitlab.com raw URL works across projects, with `spec: inputs` interpolation and `integrity` enforcement.
+
+**Chosen path.** Spec §12 A2 holds as written. Self-managed users include `https://gitlab.com/faridlamaul/shipguard/-/raw/X.Y.Z/templates/scan.yml` with `integrity` and `inputs`. The release workflow must publish the integrity hash of each template with every release.
 
 ## V7: can a called reusable workflow read its own commit SHA?
 
