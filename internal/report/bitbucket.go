@@ -93,6 +93,7 @@ func (c CodeInsights) Publish(ctx context.Context, r finding.Result, d policy.De
 	if d.ExitCode() != 0 {
 		result = "FAILED"
 	}
+	anns, _ := annotations(r, d)
 	body := ciReport{
 		Title:      reportKey,
 		Details:    cutRunes(firstLine(Summary(r, d, 0)), maxDetails),
@@ -107,7 +108,6 @@ func (c CodeInsights) Publish(ctx context.Context, r finding.Result, d policy.De
 	if err := c.send(ctx, client, http.MethodPut, reportURL, body); err != nil {
 		return err
 	}
-	anns := annotations(r, d)
 	for i := 0; i < len(anns); i += annotationBatch {
 		end := min(i+annotationBatch, len(anns))
 		if err := c.send(ctx, client, http.MethodPost, reportURL+"/annotations", anns[i:end]); err != nil {
@@ -166,14 +166,20 @@ type annKey struct {
 
 func keyOf(f finding.Finding) annKey { return annKey{f.Fingerprint, f.ID, f.File, f.Line} }
 
-// annotations orders findings (blocking first, then severity descending) and
-// caps them at maxAnnotations.
-func annotations(r finding.Result, d policy.Decision) []ciAnnotation {
+// annotations orders the reported findings (blocking first, then severity
+// descending) and caps them at maxAnnotations; more is the number left out
+// by the cap.
+func annotations(r finding.Result, d policy.Decision) ([]ciAnnotation, int) {
 	blocking := make(map[annKey]bool, len(d.Blocking))
 	for _, f := range d.Blocking {
 		blocking[keyOf(f)] = true
 	}
-	fs := append([]finding.Finding(nil), r.Findings...)
+	var fs []finding.Finding
+	for _, f := range r.Findings {
+		if reported(f) {
+			fs = append(fs, f)
+		}
+	}
 	sort.SliceStable(fs, func(i, j int) bool {
 		bi, bj := blocking[keyOf(fs[i])], blocking[keyOf(fs[j])]
 		if bi != bj {
@@ -181,7 +187,9 @@ func annotations(r finding.Result, d policy.Decision) []ciAnnotation {
 		}
 		return fs[i].Severity > fs[j].Severity
 	})
+	more := 0
 	if len(fs) > maxAnnotations {
+		more = len(fs) - maxAnnotations
 		fs = fs[:maxAnnotations]
 	}
 	out := make([]ciAnnotation, 0, len(fs))
@@ -195,7 +203,7 @@ func annotations(r finding.Result, d policy.Decision) []ciAnnotation {
 			Line:           f.Line,
 		})
 	}
-	return out
+	return out, more
 }
 
 func ciSeverity(s finding.Severity) string {

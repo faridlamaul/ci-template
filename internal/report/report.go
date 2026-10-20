@@ -15,6 +15,13 @@ import (
 // SARIFFile is the SARIF report path relative to the repository.
 const SARIFFile = outDir + "/shipguard.sarif"
 
+// reported reports whether f goes into a platform report (SARIF, GitLab,
+// Code Insights). Allowed licenses are info findings: every dependency has
+// one, so they stay in findings.json only.
+func reported(f finding.Finding) bool {
+	return !finding.IsLicense(f) || f.Severity >= finding.Low
+}
+
 // Report writes the platform report for format: "" (auto from the detected
 // platform), sarif, gitlab, bitbucket or none. Auto: github and local write
 // SARIF, gitlab writes the GitLab reports into .shipguard/, bitbucket

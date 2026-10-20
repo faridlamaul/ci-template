@@ -108,7 +108,7 @@ func TestAnnotationsOrderAndShape(t *testing.T) {
 	crit := finding.Finding{ID: "C", Severity: finding.Critical, File: "w", Fingerprint: "c"}
 	r := finding.Result{Findings: []finding.Finding{low, med, crit, blk}}
 	d := policy.Decision{Blocking: []finding.Finding{blk}}
-	a := annotations(r, d)
+	a, _ := annotations(r, d)
 	var ids []string
 	for _, x := range a {
 		ids = append(ids, x.Summary[:1])
@@ -122,6 +122,22 @@ func TestAnnotationsOrderAndShape(t *testing.T) {
 	b, _ := json.Marshal(a[0])
 	if strings.Contains(string(b), `"line"`) {
 		t.Errorf("line 0 not omitted: %s", b)
+	}
+}
+
+func TestAnnotationsSkipInfoLicenses(t *testing.T) {
+	r := finding.Result{Findings: []finding.Finding{
+		{ID: "license:MIT", Category: finding.CategorySCA, Severity: finding.Info, File: "go.mod", Fingerprint: "l1"},
+		{ID: "license:AGPL-3.0", Category: finding.CategorySCA, Severity: finding.High, File: "go.mod", Fingerprint: "l2"},
+		{ID: "info.rule", Category: finding.CategorySAST, Severity: finding.Info, File: "a.go", Fingerprint: "s1"},
+	}}
+	var ids []string
+	anns, _ := annotations(r, policy.Decision{})
+	for _, a := range anns {
+		ids = append(ids, a.ExternalID)
+	}
+	if strings.Join(ids, ",") != "l2,s1" {
+		t.Fatalf("annotations = %v, want l2,s1 (no info license)", ids)
 	}
 }
 

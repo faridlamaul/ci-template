@@ -144,3 +144,22 @@ func TestSARIFDedupesRules(t *testing.T) {
 		}
 	}
 }
+
+// TestSARIFSkipsInfoLicenses: allowed licenses are info findings and are left
+// out, as in the GitLab report; denied licenses and other info findings stay.
+func TestSARIFSkipsInfoLicenses(t *testing.T) {
+	r := finding.Result{Findings: []finding.Finding{
+		{ID: "license:MIT", Category: finding.CategorySCA, Severity: finding.Info, File: "go.mod", Message: "a uses MIT", Fingerprint: "l1"},
+		{ID: "license:AGPL-3.0-only", Category: finding.CategorySCA, Severity: finding.High, File: "go.mod", Message: "b uses AGPL", Fingerprint: "l2"},
+		{ID: "info.rule", Category: finding.CategorySAST, Severity: finding.Info, File: "a.go", Message: "note", Fingerprint: "s1"},
+	}}
+	out, _ := renderSARIF(t, r)
+	if strings.Contains(out, "license:MIT") {
+		t.Errorf("info license in SARIF:\n%s", out)
+	}
+	for _, want := range []string{"license:AGPL-3.0-only", "info.rule"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("SARIF missing %s", want)
+		}
+	}
+}

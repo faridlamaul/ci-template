@@ -77,10 +77,17 @@ type sarifRegion struct {
 // WriteSARIF renders the findings as a SARIF 2.1.0 log. Rules are sorted by
 // id and deduplicated; results keep the input order. Findings without a File
 // are included without a location (GitHub code scanning may ignore them).
+// Info license findings (allowed licenses) are left out.
 func WriteSARIF(w io.Writer, r finding.Result, version string) error {
+	var fs []finding.Finding
+	for _, f := range r.Findings {
+		if reported(f) {
+			fs = append(fs, f)
+		}
+	}
 	rules := map[string]*sarifRule{}
 	maxSev := map[string]finding.Severity{}
-	for _, f := range r.Findings {
+	for _, f := range fs {
 		rule, ok := rules[f.ID]
 		if !ok {
 			rule = &sarifRule{
@@ -107,8 +114,8 @@ func WriteSARIF(w io.Writer, r finding.Result, version string) error {
 		driverRules = append(driverRules, *rules[id])
 	}
 
-	results := make([]sarifResult, 0, len(r.Findings))
-	for _, f := range r.Findings {
+	results := make([]sarifResult, 0, len(fs))
+	for _, f := range fs {
 		res := sarifResult{
 			RuleID:              f.ID,
 			RuleIndex:           index[f.ID],

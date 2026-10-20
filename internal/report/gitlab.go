@@ -130,7 +130,7 @@ func WriteGitLab(dir string, r finding.Result, version string, now time.Time) er
 			Vulnerabilities: []glVuln{},
 		}
 		for _, f := range r.Findings {
-			if !k.covers(f.Category) || (finding.IsLicense(f) && f.Severity < finding.Low) {
+			if !k.covers(f.Category) || !reported(f) {
 				continue
 			}
 			rep.Vulnerabilities = append(rep.Vulnerabilities, glVulnFor(k.scanType, f, sha))
