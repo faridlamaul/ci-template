@@ -34,6 +34,16 @@ func TestSummaryShowsPolicyChange(t *testing.T) {
 	}
 }
 
+func TestSummaryStatesDefaultsApplied(t *testing.T) {
+	s := Summary(finding.Result{PolicyDefaults: true}, policy.Decision{Result: "pass"}, 0)
+	if !strings.Contains(s, "built-in defaults applied") {
+		t.Errorf("summary missing the defaults note:\n%s", s)
+	}
+	if strings.Contains(Summary(finding.Result{}, policy.Decision{Result: "pass"}, 0), "built-in defaults") {
+		t.Error("defaults note shown with a config file")
+	}
+}
+
 func TestSummarySections(t *testing.T) {
 	f := finding.Finding{ID: "A|B", Category: finding.CategorySecrets, Severity: finding.Critical,
 		File: "a|b.go", Line: 3, Message: "line1\nline2 | x"}

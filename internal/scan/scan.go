@@ -220,6 +220,7 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		Scanners:         []finding.ScannerRun{},
 		PolicyChanged:    ec.changed,
 		PolicyDiff:       ec.diff,
+		PolicyDefaults:   ec.defaults,
 	}
 	if res.Context, err = json.Marshal(o.Ctx); err != nil {
 		return finding.Result{}, policy.Config{}, fmt.Errorf("encode context: %w", err)
@@ -325,14 +326,17 @@ func enabled(cfg policy.Config, c finding.Category) bool {
 // effective is the config the gate will use, with the bytes written to
 // .shipguard/policy.yaml (cfg is parsed from exactly those bytes).
 type effective struct {
-	cfg     policy.Config
-	bytes   []byte
-	changed bool
-	diff    string
+	cfg      policy.Config
+	bytes    []byte
+	changed  bool
+	diff     string
+	defaults bool // no config file at the revision used
 }
 
 // effectiveConfig picks the base revision's config on a PR (baseSHA != "")
 // and the working tree's otherwise, applies the mode override, and parses it.
+// Only the default .shipguard.yaml may be absent; a config path named
+// explicitly must exist (on a PR at the head or the base).
 func effectiveConfig(dir, configPath, baseSHA, mode string) (effective, error) {
 	var e effective
 	rel, err := configRel(dir, configPath)
@@ -344,6 +348,7 @@ func effectiveConfig(dir, configPath, baseSHA, mode string) (effective, error) {
 		return e, err
 	}
 	data, ok, source := headBytes, headOK, rel
+	found := headOK
 	if baseSHA != "" {
 		slash := filepath.ToSlash(rel)
 		baseBytes, baseOK, err := gitx.Show(dir, baseSHA, slash)
@@ -356,6 +361,7 @@ func effectiveConfig(dir, configPath, baseSHA, mode string) (effective, error) {
 			return e, fmt.Errorf("read head config: %w", err)
 		}
 		data, ok, source = baseBytes, baseOK, rel+" at base "+baseSHA
+		found = found || commitOK || baseOK
 		if commitOK != baseOK || !bytes.Equal(commitBytes, baseBytes) {
 			e.changed = true
 			if e.diff, err = gitx.Diff(dir, baseSHA, "HEAD", slash); err != nil {
@@ -363,8 +369,12 @@ func effectiveConfig(dir, configPath, baseSHA, mode string) (effective, error) {
 			}
 		}
 	}
+	if !found && rel != DefaultConfig {
+		return e, fmt.Errorf("%w: config %s not found", policy.ErrConfig, filepath.ToSlash(rel))
+	}
 	if !ok {
 		data = []byte(defaultsYAML)
+		e.defaults = true
 	}
 	if mode != "" {
 		if data, err = setMode(data, mode); err != nil {

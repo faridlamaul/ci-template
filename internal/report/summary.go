@@ -17,6 +17,9 @@ func Summary(r finding.Result, d policy.Decision, maxBytes int) string {
 	var head strings.Builder
 	fmt.Fprintf(&head, "## shipguard: %s\n\n", strings.ToUpper(d.Result))
 	fmt.Fprintf(&head, "%d blocking, %d new, %d total findings.\n\n", len(d.Blocking), d.New, d.Total)
+	if r.PolicyDefaults {
+		head.WriteString("No shipguard config file found: built-in defaults applied.\n\n")
+	}
 	if r.PolicyChanged {
 		head.WriteString("### ⚠ Policy changed in this PR\n\n")
 		head.WriteString("The policy was modified by this change. Review it before merging.\n\n")

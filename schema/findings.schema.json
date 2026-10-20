@@ -135,6 +135,10 @@
     },
     "policy_diff": {
       "type": "string"
+    },
+    "policy_defaults": {
+      "type": "boolean",
+      "description": "No config file was found at the revision the policy is read from; built-in defaults apply."
     }
   },
   "required": [

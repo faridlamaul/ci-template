@@ -765,3 +765,48 @@ func TestParseCategories(t *testing.T) {
 		}
 	}
 }
+
+// TestScanExplicitConfigMissingFailsClosed: a config path the user named
+// explicitly must exist; only the default .shipguard.yaml may be absent.
+func TestScanExplicitConfigMissingFailsClosed(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	r.Commit("base", "src/a.go")
+	push := platform.Context{Event: platform.EventPush}
+	for _, p := range []string{"ci/shipguard.yaml", filepath.Join(r.Dir, "ci", "shipguard.yaml")} {
+		_, _, err := Run(context.Background(), Options{Dir: r.Dir, ConfigPath: p, Ctx: push, Categories: allCats(), Now: fixedNow})
+		if !errors.Is(err, policy.ErrConfig) || !strings.Contains(err.Error(), "ci/shipguard.yaml") {
+			t.Errorf("push %s: err = %v, want a config error naming the file", p, err)
+		}
+	}
+	// The default name, explicit or not, may be absent: defaults apply.
+	for _, p := range []string{"", ".shipguard.yaml", "./.shipguard.yaml"} {
+		res, _ := runScan(t, Options{Dir: r.Dir, ConfigPath: p, Ctx: push})
+		if !res.PolicyDefaults {
+			t.Errorf("config %q: PolicyDefaults = false, want true", p)
+		}
+	}
+
+	// PR: missing at both head and base is an error; at either one is fine.
+	pr, _ := prRepo(t, "", "")
+	_, _, err := Run(context.Background(), Options{Dir: pr.Dir, ConfigPath: "ci/shipguard.yaml", Ctx: prCtx(), Categories: allCats(), Now: fixedNow})
+	if !errors.Is(err, policy.ErrConfig) || !strings.Contains(err.Error(), "ci/shipguard.yaml") {
+		t.Errorf("pr: err = %v, want a config error naming the file", err)
+	}
+	commitFile(pr, "ci/shipguard.yaml", "version: 1\n")
+	res, _ := runScan(t, Options{Dir: pr.Dir, ConfigPath: "ci/shipguard.yaml", Ctx: prCtx()})
+	if !res.PolicyChanged || !res.PolicyDefaults {
+		t.Errorf("pr adding the config: changed=%v defaults=%v, want both (the base has none)", res.PolicyChanged, res.PolicyDefaults)
+	}
+}
+
+func TestScanConfigFoundIsNotDefaults(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	commitFile(r, ".shipguard.yaml", "version: 1\n")
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}})
+	if res.PolicyDefaults {
+		t.Error("PolicyDefaults = true with a config file present")
+	}
+	validFindingsJSON(t, r.Dir)
+}

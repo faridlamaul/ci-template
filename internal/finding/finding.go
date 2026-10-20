@@ -114,6 +114,7 @@ type Result struct {
 	Findings         []Finding       `json:"findings"`
 	PolicyChanged    bool            `json:"policy_changed,omitempty"`
 	PolicyDiff       string          `json:"policy_diff,omitempty"`
+	PolicyDefaults   bool            `json:"policy_defaults,omitempty"` // no config file: built-in defaults
 }
 
 // ReadResult loads a Result from a JSON file.
