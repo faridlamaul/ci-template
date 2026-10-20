@@ -1,0 +1,83 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.76.0"
+  },
+  "ArtifactName": ".",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "package-lock.json",
+      "Class": "lang-pkgs",
+      "Type": "npm",
+      "Packages": [
+        {
+          "ID": "agpl-pkg@1.0.0",
+          "Name": "agpl-pkg",
+          "Identifier": {
+            "PURL": "pkg:npm/agpl-pkg@1.0.0",
+            "UID": "693a77df89cd6d9b"
+          },
+          "Version": "1.0.0",
+          "Licenses": [
+            "AGPL-3.0-only"
+          ],
+          "Relationship": "direct",
+          "Locations": [
+            {
+              "StartLine": 1,
+              "EndLine": 1
+            }
+          ],
+          "AnalyzedBy": "npm"
+        },
+        {
+          "ID": "left-pad@1.3.0",
+          "Name": "left-pad",
+          "Identifier": {
+            "PURL": "pkg:npm/left-pad@1.3.0",
+            "UID": "b58ec9dafac61ec1"
+          },
+          "Version": "1.3.0",
+          "Licenses": [
+            "MIT"
+          ],
+          "Relationship": "direct",
+          "Locations": [
+            {
+              "StartLine": 1,
+              "EndLine": 1
+            }
+          ],
+          "AnalyzedBy": "npm"
+        }
+      ]
+    },
+    {
+      "Target": "package-lock.json",
+      "Class": "license",
+      "Licenses": [
+        {
+          "Severity": "CRITICAL",
+          "Category": "forbidden",
+          "PkgName": "agpl-pkg",
+          "FilePath": "package-lock.json",
+          "Name": "AGPL-3.0-only",
+          "Text": "",
+          "Confidence": 1,
+          "Link": ""
+        },
+        {
+          "Severity": "LOW",
+          "Category": "notice",
+          "PkgName": "left-pad",
+          "FilePath": "package-lock.json",
+          "Name": "MIT",
+          "Text": "",
+          "Confidence": 1,
+          "Link": ""
+        }
+      ]
+    }
+  ]
+}
