@@ -1,11 +1,12 @@
 rules:
   - id: shipguard.python.unsafe-deserialization
     languages: [python]
-    severity: ERROR
+    severity: WARNING
     message: >-
-      Deserializing with pickle, marshal, shelve or yaml.load with an unsafe
-      loader can execute arbitrary code from crafted input. Use json, or
-      yaml.safe_load, and never unpickle data from an untrusted source.
+      Deserializing with pickle, marshal, dill or yaml.load with an unsafe
+      loader can execute arbitrary code if the data is ever attacker
+      influenced. Make sure the source is trusted and integrity-protected, or
+      use json or yaml.safe_load.
     patterns:
       - pattern-either:
           - pattern: pickle.load(...)
@@ -28,4 +29,4 @@ rules:
     metadata:
       category: security
       cwe: "CWE-502: Deserialization of Untrusted Data"
-      confidence: HIGH
+      confidence: MEDIUM

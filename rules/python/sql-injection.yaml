@@ -1,23 +1,31 @@
 rules:
   - id: shipguard.python.sql-injection
     languages: [python]
+    mode: taint
     severity: ERROR
     message: >-
       The SQL statement is built with string formatting, concatenation or an
-      f-string, which allows SQL injection when any part is attacker
-      controlled. Use parameterized queries: cursor.execute("... WHERE id = %s",
-      (value,)) or the ORM's bound parameters.
-    patterns:
-      - pattern-either:
-          - pattern: $C.execute(f"...", ...)
-          - pattern: $C.execute("...".format(...), ...)
-          - pattern: $C.execute("..." % $X, ...)
-          - pattern: $C.execute($A + $B, ...)
-          - pattern: $C.executemany(f"...", ...)
-          - pattern: $C.executemany("...".format(...), ...)
-          - pattern: $C.executemany("..." % $X, ...)
-          - pattern: $C.executescript(f"...")
-      - pattern-not: $C.execute("..." + "...", ...)
+      f-string (directly or through a variable), which allows SQL injection
+      when any part is attacker controlled. Use parameterized queries:
+      cursor.execute("... WHERE id = %s", (value,)) or the ORM's bound
+      parameters.
+    pattern-sources:
+      - pattern: f"..."
+      - pattern: '"...".format(...)'
+      - pattern: '"..." % $X'
+      - patterns:
+          - pattern: $A + $B
+          - pattern-not: '"..." + "..."'
+    pattern-sinks:
+      - patterns:
+          - pattern: $C.execute($Q, ...)
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern: $C.executemany($Q, ...)
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern: $C.executescript($Q)
+          - focus-metavariable: $Q
     metadata:
       category: security
       cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"

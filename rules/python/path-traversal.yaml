@@ -21,12 +21,24 @@ rules:
       - pattern: os.path.basename(...)
       - pattern: secure_filename(...)
     pattern-sinks:
-      - pattern: open(...)
-      - pattern: send_file(...)
-      - pattern: send_from_directory($DIR, $PATH, ...)
-      - pattern: os.remove(...)
-      - pattern: os.unlink(...)
-      - pattern: shutil.rmtree(...)
+      - patterns:
+          - pattern: open($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: send_file($P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: send_from_directory($DIR, $P, ...)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: os.remove($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: os.unlink($P)
+          - focus-metavariable: $P
+      - patterns:
+          - pattern: shutil.rmtree($P, ...)
+          - focus-metavariable: $P
     metadata:
       category: security
       cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"

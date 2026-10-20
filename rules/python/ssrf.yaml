@@ -16,10 +16,18 @@ rules:
       - pattern: request.GET.get(...)
       - pattern: request.POST.get(...)
     pattern-sinks:
-      - pattern: requests.$M($URL, ...)
-      - pattern: httpx.$M($URL, ...)
-      - pattern: urllib.request.urlopen($URL, ...)
-      - pattern: urlopen($URL, ...)
+      - patterns:
+          - pattern: requests.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: httpx.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: urllib.request.urlopen($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: urlopen($URL, ...)
+          - focus-metavariable: $URL
     metadata:
       category: security
       cwe: "CWE-918: Server-Side Request Forgery (SSRF)"

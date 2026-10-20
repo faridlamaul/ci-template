@@ -13,3 +13,10 @@ def bad():
 def good():
     # ok: shipguard.python.ssrf
     requests.get("https://api.example.com/health")
+
+
+def good_body():
+    # ok: shipguard.python.ssrf
+    requests.get("https://api.example.com/search", params={"q": request.args.get("q")})
+    # ok: shipguard.python.ssrf
+    requests.post("https://api.example.com/x", json={"x": request.form["x"]})

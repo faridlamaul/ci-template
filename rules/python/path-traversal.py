@@ -18,3 +18,8 @@ def good():
     open(os.path.join("/srv/data", name))
     # ok: shipguard.python.path-traversal
     open("/etc/hostname")
+
+
+def good_write():
+    # ok: shipguard.python.path-traversal
+    open("/tmp/out.txt", "w").write(request.form["content"])

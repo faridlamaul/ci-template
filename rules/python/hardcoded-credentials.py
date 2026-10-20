@@ -18,4 +18,10 @@ def good():
     db_password = os.environ["DB_PASSWORD"]
     # ok: shipguard.python.hardcoded-credentials
     token_header = ""
-    return db_password, token_header
+    # ok: shipguard.python.hardcoded-credentials
+    token_url = "https://auth.example.com/token"
+    # ok: shipguard.python.hardcoded-credentials
+    password_prompt = "Enter your password now"
+    # ok: shipguard.python.hardcoded-credentials
+    secret_name = "db-credentials"
+    return db_password, token_header, token_url, password_prompt, secret_name
