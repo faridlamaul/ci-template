@@ -1,0 +1,6 @@
+Official GitLab security report schemas, vendored unmodified (self-contained, no external $ref).
+Repository: https://gitlab.com/gitlab-org/security-products/security-report-schemas
+Tag: v15.2.5 (report version 15.2.5)
+https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/v15.2.5/dist/secret-detection-report-format.json
+https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/v15.2.5/dist/sast-report-format.json
+https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/raw/v15.2.5/dist/dependency-scanning-report-format.json
