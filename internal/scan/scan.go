@@ -33,7 +33,7 @@ const (
 )
 
 // AlwaysExclude lists the paths never scanned, whatever the config says.
-var AlwaysExclude = []string{".shipguard/", ".shipguard-cache/", ".shipguard-action/", ".git/", "node_modules/"}
+var AlwaysExclude = []string{".shipguard/", ".shipguard-cache/", ".shipguard-action/", ".git/", "node_modules/", "**/node_modules/**"}
 
 // defaultsYAML is written to policy.yaml when the repository has no config;
 // policy.Parse turns it into policy.Defaults().
@@ -92,6 +92,11 @@ type headResult struct {
 // failures are recorded in the result; the error return is reserved for
 // config, base-resolution and output errors.
 func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) {
+	out := filepath.Join(o.Dir, OutDir)
+	rawDir := filepath.Join(out, "raw")
+	if err := resetOutput(out); err != nil {
+		return finding.Result{}, policy.Config{}, err
+	}
 	if o.Mode != "" && o.Mode != "enforce" && o.Mode != "audit" {
 		return finding.Result{}, policy.Config{}, fmt.Errorf("%w: --mode must be enforce or audit, got %q", policy.ErrConfig, o.Mode)
 	}
@@ -126,11 +131,6 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 	}
 	cfg := ec.cfg
 
-	out := filepath.Join(o.Dir, OutDir)
-	rawDir := filepath.Join(out, "raw")
-	if err := os.MkdirAll(rawDir, 0o755); err != nil {
-		return finding.Result{}, policy.Config{}, fmt.Errorf("create output dir: %w", err)
-	}
 	if err := os.WriteFile(filepath.Join(out, "policy.yaml"), ec.bytes, 0o644); err != nil {
 		return finding.Result{}, policy.Config{}, fmt.Errorf("write effective policy: %w", err)
 	}
@@ -216,7 +216,8 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 
 // markExisting scans the base revision in a worktree with every head scanner
 // that succeeded (except secrets, whose log range is already PR-only) and
-// marks head findings whose fingerprint the base also has as existing. A base
+// marks head findings whose fingerprint the base also has as existing, at
+// most as many per fingerprint as the base has. A base
 // failure turns the head run into an error and leaves its findings new.
 func markExisting(ctx context.Context, dir, baseSHA string, head scanner.Target, results []headResult, now func() time.Time) error {
 	baseRaw, err := os.MkdirTemp("", "shipguard-base-raw-*")
@@ -254,12 +255,15 @@ func markExisting(ctx context.Context, dir, baseSHA string, head scanner.Target,
 			hr.run.Status, hr.run.Error = "error", "base scan failed: "+err.Error()
 			continue
 		}
-		seen := make(map[string]bool, len(base))
+		// Multiset match: a PR that adds another copy of an existing
+		// finding gets the extra copy marked new.
+		left := make(map[string]int, len(base))
 		for _, f := range base {
-			seen[f.Fingerprint] = true
+			left[f.Fingerprint]++
 		}
 		for j := range hr.findings {
-			if seen[hr.findings[j].Fingerprint] {
+			if fp := hr.findings[j].Fingerprint; left[fp] > 0 {
+				left[fp]--
 				hr.findings[j].Status = finding.StatusExisting
 			}
 		}
@@ -309,8 +313,13 @@ func effectiveConfig(dir, configPath, baseSHA, mode string) (effective, error) {
 		if err != nil {
 			return e, fmt.Errorf("read base config: %w", err)
 		}
+		// Compare committed HEAD, the same revisions PolicyDiff shows.
+		commitBytes, commitOK, err := gitx.Show(dir, "HEAD", slash)
+		if err != nil {
+			return e, fmt.Errorf("read head config: %w", err)
+		}
 		data, ok, source = baseBytes, baseOK, rel+" at base "+baseSHA
-		if headOK != baseOK || !bytes.Equal(headBytes, baseBytes) {
+		if commitOK != baseOK || !bytes.Equal(commitBytes, baseBytes) {
 			e.changed = true
 			if e.diff, err = gitx.Diff(dir, baseSHA, "HEAD", slash); err != nil {
 				return e, err
@@ -330,6 +339,26 @@ func effectiveConfig(dir, configPath, baseSHA, mode string) (effective, error) {
 	}
 	e.bytes = data
 	return e, nil
+}
+
+// resetOutput removes results a previous run (or a commit) left in out, so
+// nothing stale or planted is read as this run's output, and recreates raw/.
+// A symlink or file at out is replaced by a real directory.
+func resetOutput(out string) error {
+	if fi, err := os.Lstat(out); err == nil && !fi.IsDir() {
+		if err := os.Remove(out); err != nil {
+			return fmt.Errorf("reset output dir: %w", err)
+		}
+	}
+	for _, p := range []string{"findings.json", "policy.yaml", "raw"} {
+		if err := os.RemoveAll(filepath.Join(out, p)); err != nil {
+			return fmt.Errorf("reset output dir: %w", err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(out, "raw"), 0o755); err != nil {
+		return fmt.Errorf("create output dir: %w", err)
+	}
+	return nil
 }
 
 // configRel returns the config path relative to the repository root.

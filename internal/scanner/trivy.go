@@ -19,12 +19,21 @@ var trivySleep = time.Sleep
 // trivyCache returns the trivy cache directory under the target cache dir.
 func trivyCache(t Target) string { return filepath.Join(t.CacheDir, "trivy") }
 
-// trivySkipDirs maps the directory-shaped Exclude entries (ending in "/") to
-// --skip-dirs flags; glob patterns are applied centrally on the findings.
+// trivySkipDirs maps the directory-shaped Exclude entries to --skip-dirs
+// flags: "dir/" and "glob/**" (e.g. "**/node_modules/**") become "dir" and
+// "glob", which trivy matches as globs. Other patterns are applied centrally
+// on the findings.
 func trivySkipDirs(t Target) []string {
 	var a []string
 	for _, e := range t.Exclude {
-		if d := strings.TrimRight(e, "/"); strings.HasSuffix(e, "/") && d != "" {
+		var d string
+		switch {
+		case strings.HasSuffix(e, "/**"):
+			d = strings.TrimSuffix(e, "/**")
+		case strings.HasSuffix(e, "/"):
+			d = strings.TrimRight(e, "/")
+		}
+		if d != "" && d != "**" {
 			a = append(a, "--skip-dirs", d)
 		}
 	}

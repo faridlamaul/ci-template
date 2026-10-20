@@ -298,3 +298,11 @@ func TestTrivyScanErrors(t *testing.T) {
 		t.Fatalf("want wrapped runner error, got %v", err)
 	}
 }
+
+func TestTrivySkipDirsNestedGlobs(t *testing.T) {
+	got := trivySkipDirs(Target{Exclude: []string{"node_modules/", "**/node_modules/**", "vendor/**", "**/*.gen.yaml", "**", "/"}})
+	want := []string{"--skip-dirs", "node_modules", "--skip-dirs", "**/node_modules", "--skip-dirs", "vendor"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

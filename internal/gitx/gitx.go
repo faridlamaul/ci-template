@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -26,12 +27,14 @@ func (e *gitError) Error() string {
 
 func (e *gitError) Unwrap() error { return e.err }
 
-// git runs git in dir without ever prompting for credentials.
+// git runs git in dir without ever prompting for credentials. HTTP transfers
+// slower than 1000 B/s for 60s are aborted so a stalled fetch cannot hang.
 func git(dir string, args ...string) ([]byte, error) {
 	full := append([]string{"-c", "color.ui=false", "-c", "log.showSignature=false"}, args...)
 	cmd := exec.Command("git", full...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C",
+		"GIT_HTTP_LOW_SPEED_LIMIT=1000", "GIT_HTTP_LOW_SPEED_TIME=60")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -60,8 +63,32 @@ func commit(dir, rev string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// shaRe matches an abbreviated or full commit SHA (SHA-1 or SHA-256).
+var shaRe = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+
+// fetchRef fetches ref from origin. A branch name is fetched with an explicit
+// refspec so origin/<ref> is updated even in a single-branch clone, whose
+// default refspec covers only the cloned branch. A SHA is fetched as is and
+// resolved via FETCH_HEAD; if that fails it is retried as a branch name.
+func fetchRef(dir, ref string) (string, error) {
+	if shaRe.MatchString(ref) {
+		if _, err := git(dir, "fetch", "--quiet", "--no-tags", "origin", ref); err == nil {
+			return commit(dir, "FETCH_HEAD")
+		}
+		// Not fetchable as a SHA: it may be a hex-looking branch name.
+	}
+	if _, err := git(dir, "check-ref-format", "refs/heads/"+ref); err != nil {
+		return "", fmt.Errorf("invalid branch name: %w", err)
+	}
+	spec := "+refs/heads/" + ref + ":refs/remotes/origin/" + ref
+	if _, err := git(dir, "fetch", "--quiet", "--no-tags", "origin", spec); err != nil {
+		return "", err
+	}
+	return commit(dir, "refs/remotes/origin/"+ref)
+}
+
 // ResolveRef resolves ref to a commit SHA. It tries origin/<ref>, then <ref>,
-// then fetches <ref> from origin and tries both again. The error names ref.
+// then fetches <ref> from origin (see fetchRef). The error names ref.
 func ResolveRef(dir, ref string) (string, error) {
 	if ref == "" {
 		return "", errors.New("resolve base ref: empty ref")
@@ -80,14 +107,11 @@ func ResolveRef(dir, ref string) (string, error) {
 	if sha, ok := try(); ok {
 		return sha, nil
 	}
-	_, ferr := git(dir, "fetch", "--quiet", "--no-tags", "origin", ref)
-	if sha, ok := try(); ok {
-		return sha, nil
+	sha, err := fetchRef(dir, ref)
+	if err != nil {
+		return "", fmt.Errorf("resolve base ref %q: not found locally and fetch from origin failed: %w", ref, err)
 	}
-	if ferr != nil {
-		return "", fmt.Errorf("resolve base ref %q: not found locally and fetch from origin failed: %w", ref, ferr)
-	}
-	return "", fmt.Errorf("resolve base ref %q: not found locally or on origin", ref)
+	return sha, nil
 }
 
 // IsShallow reports whether the repository is a shallow clone.
@@ -99,9 +123,10 @@ func IsShallow(dir string) (bool, error) {
 	return strings.TrimSpace(string(out)) == "true", nil
 }
 
-// Unshallow fetches the full history of a shallow clone from origin.
+// Unshallow fetches the full history of a shallow clone from origin, with
+// every branch, so it also works in single-branch clones.
 func Unshallow(dir string) error {
-	if _, err := git(dir, "fetch", "--quiet", "--unshallow", "--no-tags", "origin"); err != nil {
+	if _, err := git(dir, "fetch", "--quiet", "--unshallow", "--no-tags", "origin", "+refs/heads/*:refs/remotes/origin/*"); err != nil {
 		return fmt.Errorf("unshallow clone: %w", err)
 	}
 	return nil

@@ -161,3 +161,61 @@ func TestShallowUnshallow(t *testing.T) {
 		t.Fatalf("after Unshallow IsShallow = %v, %v; want false", sh, err)
 	}
 }
+
+// singleBranch returns origin (main + feature) and a shallow single-branch
+// clone of feature, as Bitbucket Pipelines clones by default.
+func singleBranch(t *testing.T) (origin, c *gitfixture.Repo, mainSHA string) {
+	t.Helper()
+	origin = gitfixture.New(t)
+	origin.Commit("one", "a.txt")
+	mainSHA = origin.Commit("two", "a.txt")
+	origin.Git("checkout", "-q", "-b", "feature")
+	origin.Commit("feat", "b.txt")
+	origin.Git("checkout", "-q", "main")
+	c = clone(t, origin, "--single-branch", "--branch", "feature", "--depth", "1")
+	return origin, c, mainSHA
+}
+
+func TestResolveRefSingleBranchClone(t *testing.T) {
+	isolate(t)
+	_, c, mainSHA := singleBranch(t)
+	got, err := ResolveRef(c.Dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != mainSHA {
+		t.Fatalf("ResolveRef(main) = %s, want %s", got, mainSHA)
+	}
+	if out := c.Git("rev-parse", "origin/main"); out != mainSHA {
+		t.Errorf("origin/main = %s, want it updated to %s", out, mainSHA)
+	}
+}
+
+func TestResolveRefFetchesSHA(t *testing.T) {
+	isolate(t)
+	origin, c, _ := singleBranch(t)
+	origin.Git("checkout", "-q", "-b", "other")
+	want := origin.Commit("other", "c.txt")
+	origin.Git("config", "uploadpack.allowAnySHA1InWant", "true")
+	got, err := ResolveRef(c.Dir, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("ResolveRef(sha) = %s, want %s", got, want)
+	}
+}
+
+func TestUnshallowSingleBranchClone(t *testing.T) {
+	isolate(t)
+	_, c, mainSHA := singleBranch(t)
+	if err := Unshallow(c.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if sh, err := IsShallow(c.Dir); err != nil || sh {
+		t.Fatalf("IsShallow = %v, %v; want false", sh, err)
+	}
+	if out := c.Git("rev-parse", "origin/main"); out != mainSHA {
+		t.Errorf("origin/main = %s, want %s after Unshallow", out, mainSHA)
+	}
+}

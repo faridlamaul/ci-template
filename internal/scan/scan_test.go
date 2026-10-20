@@ -330,6 +330,112 @@ func TestScanPRBitbucketUnshallows(t *testing.T) {
 	}
 }
 
+// Bitbucket clones with --single-branch --branch <pr branch> --depth N.
+func TestScanPRBitbucketSingleBranchClone(t *testing.T) {
+	isolate(t)
+	origin := gitfixture.New(t)
+	origin.Commit("one", "src/a.go")
+	mainSHA := origin.Commit("two", "src/a.go")
+	origin.Git("checkout", "-q", "-b", "feature")
+	origin.Commit("feat", "src/b.go")
+	origin.Git("checkout", "-q", "main")
+	dst := filepath.Join(t.TempDir(), "clone")
+	origin.Git("clone", "-q", "--single-branch", "--branch", "feature", "--depth", "1", "file://"+origin.Dir, dst)
+
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: dst,
+		head: []finding.Finding{fnd("opengrep", finding.CategorySAST, "old", "src/a.go")},
+		base: []finding.Finding{fnd("opengrep", finding.CategorySAST, "old", "src/a.go")}}
+	secrets := &fake{name: "gitleaks", cat: finding.CategorySecrets, headDir: dst}
+	ctx := platform.Context{Platform: "bitbucket", Event: platform.EventPR, BaseRef: "main"}
+	res, _ := runScan(t, Options{Dir: dst, Ctx: ctx, Scanners: []scanner.Scanner{secrets, sast}})
+
+	if got := statusOf(t, res, "old"); got != finding.StatusExisting {
+		t.Errorf("old: %q, want existing", got)
+	}
+	if lo := secrets.targets[0].LogOpts; lo != mainSHA+"..HEAD" {
+		t.Errorf("LogOpts = %q, want %s..HEAD", lo, mainSHA)
+	}
+}
+
+func TestScanPRDuplicateFindingIsNew(t *testing.T) {
+	r, _ := prRepo(t, "", "")
+	dup := fnd("opengrep", finding.CategorySAST, "dup", "src/a.go")
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir,
+		head: []finding.Finding{dup, dup, dup},
+		base: []finding.Finding{dup}}
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: prCtx(), Scanners: []scanner.Scanner{sast}})
+
+	counts := map[finding.Status]int{}
+	for _, f := range res.Findings {
+		counts[f.Status]++
+	}
+	if counts[finding.StatusExisting] != 1 || counts[finding.StatusNew] != 2 {
+		t.Errorf("statuses = %v, want 1 existing and 2 new", counts)
+	}
+}
+
+func TestScanPRPolicyChangedIgnoresWorkingTree(t *testing.T) {
+	r, _ := prRepo(t, "version: 1\nmode: enforce\n", "version: 1\nmode: enforce\n")
+	if err := os.WriteFile(filepath.Join(r.Dir, ".shipguard.yaml"), []byte("version: 1\nmode: audit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: prCtx()})
+	if res.PolicyChanged || res.PolicyDiff != "" {
+		t.Errorf("changed=%v diff=%q; want the committed HEAD compared, not the working tree", res.PolicyChanged, res.PolicyDiff)
+	}
+}
+
+func TestScanClearsStaleOutput(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	r.Commit("base", "src/a.go")
+	out := filepath.Join(r.Dir, ".shipguard")
+	for _, p := range []string{"findings.json", "policy.yaml", "raw/planted.json"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(out, p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(out, p), []byte("planted"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A failing run (bad mode) must still leave no stale results behind.
+	if _, _, err := Run(context.Background(), Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Categories: allCats(), Mode: "warn"}); err == nil {
+		t.Fatal("want error")
+	}
+	for _, p := range []string{"findings.json", "policy.yaml", "raw/planted.json"} {
+		if _, err := os.Stat(filepath.Join(out, p)); !os.IsNotExist(err) {
+			t.Errorf("%s survived: %v", p, err)
+		}
+	}
+	if fi, err := os.Stat(filepath.Join(out, "raw")); err != nil || !fi.IsDir() {
+		t.Errorf("raw/ not recreated: %v", err)
+	}
+}
+
+func TestScanReplacesSymlinkedOutDir(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	r.Commit("base", "src/a.go")
+	victim := t.TempDir()
+	keep := filepath.Join(victim, "raw", "keep.txt")
+	if err := os.MkdirAll(filepath.Dir(keep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(r.Dir, ".shipguard")); err != nil {
+		t.Fatal(err)
+	}
+	runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}})
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("symlink target was modified: %v", err)
+	}
+	if fi, err := os.Lstat(filepath.Join(r.Dir, ".shipguard")); err != nil || !fi.IsDir() {
+		t.Errorf(".shipguard is not a real directory: %v", err)
+	}
+}
+
 func TestScanScannerErrorRecorded(t *testing.T) {
 	isolate(t)
 	r := gitfixture.New(t)
@@ -364,6 +470,7 @@ func TestScanAppliesExcludes(t *testing.T) {
 		fnd("opengrep", finding.CategorySAST, "action", ".shipguard-action/a.sh"),
 		fnd("opengrep", finding.CategorySAST, "git", ".git/config"),
 		fnd("opengrep", finding.CategorySAST, "nm", "node_modules/a.js"),
+		fnd("opengrep", finding.CategorySAST, "nested-nm", "web/node_modules/pkg/a.js"),
 	}}
 
 	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Scanners: []scanner.Scanner{sast}})
@@ -371,7 +478,7 @@ func TestScanAppliesExcludes(t *testing.T) {
 	if len(res.Findings) != 1 || res.Findings[0].ID != "keep" {
 		t.Errorf("findings = %+v, want only keep", res.Findings)
 	}
-	want := []string{"vendor/", "**/*_test.go", ".shipguard/", ".shipguard-cache/", ".shipguard-action/", ".git/", "node_modules/"}
+	want := []string{"vendor/", "**/*_test.go", ".shipguard/", ".shipguard-cache/", ".shipguard-action/", ".git/", "node_modules/", "**/node_modules/**"}
 	if got := sast.targets[0].Exclude; !slices.Equal(got, want) {
 		t.Errorf("Target.Exclude = %q, want %q", got, want)
 	}
