@@ -7,10 +7,23 @@ Results of the verification items in spec §10 and §12.
 | V1 | pending (Bitbucket access) |
 | V2 | pending (Bitbucket access) |
 | V3 | pending (Bitbucket access) |
-| V4 | pending |
+| V4 | done: see below |
 | V5 | done in Task 16: opengrep 1.31.0 ships musllinux x86_64 and aarch64; the image is multi-arch on Alpine |
 | V6 | pending (gitlab.com test project) |
 | V7 | done: see below |
+
+## V4: does osv-scanner support `bun.lock`?
+
+**Method.** I created a directory that contains only a text `bun.lock` (lockfileVersion 1) pinning `lodash@4.17.15`, then ran `osv-scanner scan source -r --format json .` from the image `shipguard:dev` (osv-scanner 2.7.0) on 2026-10-20.
+
+**Evidence.**
+- Result source `/src/bun.lock`, type `lockfile`.
+- Package `lodash@4.17.15` with 6 vulnerabilities.
+- The log line reads "Scanned /src/bun.lock file and found 1 package".
+
+**Result.** osv-scanner 2.7.0 supports `bun.lock`.
+
+**Chosen path.** No change is needed. Spec §4.1 lists `bun.lock` for Node SCA, and the docs mark it as supported. The legacy binary `bun.lockb` was not tested and is not claimed.
 
 ## V7: can a called reusable workflow read its own commit SHA?
 
