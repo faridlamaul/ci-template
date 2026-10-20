@@ -225,7 +225,7 @@ func normVersion(v string) string {
 }
 
 // osvConfig is an empty osv-scanner config. Passed with --config it replaces
-// any osv-scanner.toml in the repository (R-C2).
+// any osv-scanner.toml in the repository.
 const osvConfig = ""
 
 // osvExcludes returns the --x-exclude values for the directory-shaped
@@ -258,7 +258,7 @@ func osvExcludes(exclude []string) []string {
 
 func (o *osv) args(output, config string, exclude []string) []string {
 	// --output-file replaces the deprecated --output (osv-scanner v2.7.0).
-	// Policy lives only in .shipguard.yaml (R-C2): --config overrides every
+	// Policy lives only in .shipguard.yaml: --config overrides every
 	// osv-scanner.toml, and --no-ignore stops .gitignore from hiding
 	// lockfiles; directory excludes keep osv-scanner out of those trees and
 	// all excludes are applied to the findings.

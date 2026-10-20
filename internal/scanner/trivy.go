@@ -42,7 +42,7 @@ func trivySkipDirs(t Target) []string {
 
 // trivyNoRepoConfig stops trivy from reading trivy.yaml and .trivyignore
 // from the scanned directory: an empty value disables loading (trivy 0.76).
-// Policy lives only in .shipguard.yaml (R-C2). Inline "trivy:ignore"
+// Policy lives only in .shipguard.yaml. Inline "trivy:ignore"
 // comments have no off switch in trivy 0.76 and still apply.
 var trivyNoRepoConfig = []string{"--config", "", "--ignorefile", ""}
 

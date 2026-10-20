@@ -167,7 +167,7 @@ func TestScannerErrorExitTwoEvenInAudit(t *testing.T) {
 
 func TestLicenseDenyBlocks(t *testing.T) {
 	// The SCA threshold stays at the default (high, fix_available_only):
-	// licenses have no fix, so a denied license blocks anyway (R-C1).
+	// licenses have no fix, so a denied license blocks anyway.
 	cfg := Defaults()
 	cfg.Scanners.SCA.Licenses.Deny = []string{"AGPL-3.0-only"}
 	denied := fnd("license:agpl-3.0-only", finding.CategorySCA, finding.High, false)

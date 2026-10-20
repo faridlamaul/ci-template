@@ -211,7 +211,7 @@ func (o *opengrep) args(t Target, output string) []string {
 			a = append(a, "--exclude", e)
 		}
 	}
-	// Policy lives only in .shipguard.yaml (R-C2): nosem/nosemgrep/noopengrep
+	// Policy lives only in .shipguard.yaml: nosem/nosemgrep/noopengrep
 	// comments and .semgrepignore files in the repository are not honoured.
 	// --x-ignore-semgrepignore-files is opengrep's (v1.31.0) only switch for
 	// that; it also drops opengrep's built-in default ignore list, which

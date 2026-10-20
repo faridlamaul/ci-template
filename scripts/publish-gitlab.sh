@@ -1,6 +1,6 @@
 #!/bin/sh
 # Publishes the rendered GitLab templates to the gitlab.com project that serves
-# the CI/CD Catalog component and the `include: remote` URL (spec §12 A2).
+# the CI/CD Catalog component and the `include: remote` URL.
 #
 # Environment:
 #   VERSION               X.Y.Z, no leading v (required)

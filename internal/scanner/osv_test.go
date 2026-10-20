@@ -295,7 +295,7 @@ func TestOSVRetriesRunnerErrorThenSucceeds(t *testing.T) {
 }
 
 // TestOSVNeutralizesRepoConfig checks that the repository cannot tune
-// osv-scanner (R-C2): the config is an empty file outside the repository and
+// osv-scanner: the config is an empty file outside the repository and
 // .gitignore does not hide lockfiles.
 func TestOSVNeutralizesRepoConfig(t *testing.T) {
 	noSleep(t)

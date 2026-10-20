@@ -558,7 +558,7 @@ func TestScanAppliesExcludes(t *testing.T) {
 }
 
 // TestScanSecretsNotHiddenByExcludes: committed secrets are never hidden by
-// shipguard's built-in excludes (R-I3); only shipguard's own run-time files
+// shipguard's built-in excludes; only shipguard's own run-time files
 // are skipped in a directory scan, and nothing is skipped in a history scan.
 func TestScanSecretsNotHiddenByExcludes(t *testing.T) {
 	head := []finding.Finding{
@@ -838,7 +838,7 @@ func (r *rulesReader) Scan(_ context.Context, t scanner.Target) ([]finding.Findi
 }
 
 // TestScanPRRulesFromBase: consumer rules are part of the policy, so on a PR
-// relative rule paths are read from the base, never from the PR head (R-C2).
+// relative rule paths are read from the base, never from the PR head.
 func TestScanPRRulesFromBase(t *testing.T) {
 	cfg := "version: 1\nscanners:\n  sast:\n    rules: [\"./.shipguard/rules/\"]\n"
 	isolate(t)

@@ -286,7 +286,7 @@ func TestPRDiffAware(t *testing.T) {
 
 // TestPRCannotSilenceScanners: a PR that adds a vulnerability, a secret and
 // the scanner-native files and comments that would hide them still fails
-// (R-C2: policy lives only in the base .shipguard.yaml).
+// (policy lives only in the base .shipguard.yaml).
 func TestPRCannotSilenceScanners(t *testing.T) {
 	img := image(t)
 	dir := newRepo(t, img, "python")

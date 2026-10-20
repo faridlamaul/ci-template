@@ -44,7 +44,7 @@ var RuntimeExclude = []string{
 
 // AlwaysExclude lists the paths the SAST, SCA and IaC scanners never scan,
 // whatever the config says. Secrets use only RuntimeExclude, and only in a
-// directory scan, so a committed secret is never hidden (R-I3).
+// directory scan, so a committed secret is never hidden.
 var AlwaysExclude = append(slices.Clone(RuntimeExclude), ".git/", "node_modules/", "**/node_modules/**")
 
 // defaultsYAML is written to policy.yaml when the repository has no config;
@@ -287,7 +287,7 @@ func (b *baseTree) close() {
 // resolveRules turns the consumer rule paths into absolute paths and checks
 // that they exist; URLs are kept as they are. Rules are policy, so on a PR
 // relative paths, and absolute ones inside the repository, are read from the
-// base worktree, never from the PR head (R-C2).
+// base worktree, never from the PR head.
 func resolveRules(dir string, rules []string, pr bool, base *baseTree) ([]string, error) {
 	var out []string
 	for _, r := range rules {

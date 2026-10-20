@@ -201,7 +201,7 @@ func sameDir(t *testing.T, a, b string) bool {
 }
 
 // TestGitleaksNeutralizesRepoControls checks that the repository cannot tune
-// gitleaks (R-C2): the config is the built-in default only, the ignore path
+// gitleaks: the config is the built-in default only, the ignore path
 // is an empty directory outside the repository, and gitleaks:allow comments
 // are ignored.
 func TestGitleaksNeutralizesRepoControls(t *testing.T) {

@@ -1,6 +1,6 @@
-# Verification spike (Task 0)
+# Verification results
 
-Results of the verification items in spec §10 and §12.
+Results of the questions that had to be answered on the real platforms before the adapters were built.
 
 | # | Status |
 |---|---|
@@ -8,7 +8,7 @@ Results of the verification items in spec §10 and §12.
 | V2 | done: see below |
 | V3 | done: see below |
 | V4 | done: see below |
-| V5 | done in Task 16: opengrep 1.31.0 ships musllinux x86_64 and aarch64; the image is multi-arch on Alpine |
+| V5 | done: opengrep 1.31.0 ships musllinux x86_64 and aarch64; the image is multi-arch on Alpine |
 | V6 | done: see below |
 | V7 | done: see below |
 
@@ -22,7 +22,7 @@ Results of the verification items in spec §10 and §12.
 
 **Result.** A pipe can use a public GHCR image by tag and by digest. No credentials are needed.
 
-**Chosen path.** The spec §10 fallback (also publishing to Docker Hub) is not needed. The docs recommend `docker://ghcr.io/faridlamaul/shipguard:vX.Y.Z@sha256:<digest>`.
+**Chosen path.** The fallback (also publishing the image to Docker Hub) is not needed. The docs recommend `docker://ghcr.io/faridlamaul/shipguard:vX.Y.Z@sha256:<digest>`.
 
 ## V2: does `git fetch --unshallow` work inside a Bitbucket pipe?
 
@@ -48,7 +48,7 @@ Results of the verification items in spec §10 and §12.
 
 **Chosen path.** No app password or access token variable is required. `SHIPGUARD_BITBUCKET_TOKEN` stays optional, and a step image keeps using `localhost:29418`.
 
-## Bitbucket end-to-end (Task 20)
+## Bitbucket end-to-end
 
 | Pipeline | Event | Outcome |
 |---|---|---|
@@ -67,7 +67,7 @@ Results of the verification items in spec §10 and §12.
 
 **Result.** osv-scanner 2.7.0 supports `bun.lock`.
 
-**Chosen path.** No change is needed. Spec §4.1 lists `bun.lock` for Node SCA, and the docs mark it as supported. The legacy binary `bun.lockb` was not tested and is not claimed.
+**Chosen path.** No change is needed. The docs list `bun.lock` as supported for Node SCA. The legacy binary `bun.lockb` was not tested and is not claimed.
 
 ## V6: does `include: remote` from gitlab.com raw work with `inputs` and `integrity`?
 
@@ -82,7 +82,7 @@ Results of the verification items in spec §10 and §12.
 
 **Result.** `include: remote` from a public gitlab.com raw URL works across projects, with `spec: inputs` interpolation and `integrity` enforcement.
 
-**Chosen path.** Spec §12 A2 holds as written. Self-managed users include `https://gitlab.com/faridlamaul/shipguard/-/raw/X.Y.Z/templates/scan.yml` with `integrity` and `inputs`. The release workflow must publish the integrity hash of each template with every release.
+**Chosen path.** The published templates are served from the gitlab.com project. Self-managed users include `https://gitlab.com/faridlamaul/shipguard/-/raw/X.Y.Z/templates/scan.yml` with `integrity` and `inputs`. The release workflow must publish the integrity hash of each template with every release.
 
 ## V7: can a called reusable workflow read its own commit SHA?
 
@@ -106,5 +106,5 @@ Results of the verification items in spec §10 and §12.
 **Chosen path.**
 - `scan.yml` checks out `faridlamaul/shipguard` at `${{ job.workflow_sha }}`.
 - When `job.workflow_ref` ends in `@refs/tags/vX.Y.Z`, `scan.yml` uses the published image `ghcr.io/faridlamaul/shipguard:vX.Y.Z`.
-- Callers do not need `id-token: write`. The OIDC fallback in spec §12 A5 is not needed.
+- Callers do not need `id-token: write`. The OIDC fallback is not needed.
 - `github.workflow_*` refers to the caller and must not be used for this purpose.

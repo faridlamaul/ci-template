@@ -124,7 +124,7 @@ func blocks(f finding.Finding, cfg Config) bool {
 	case f.Severity < t.Severity:
 		return false
 	case t.FixAvailableOnly && !license:
-		// A license has no fix: a denied one blocks regardless (R-C1).
+		// A license has no fix: a denied one blocks regardless.
 		return f.FixAvailable
 	}
 	return true

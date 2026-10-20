@@ -97,7 +97,7 @@ func (g *gitleaks) args(t Target, source, report, cfg, ignore string) []string {
 }
 
 // source returns the path gitleaks scans and the prefix to strip from the
-// file paths it reports. Policy lives only in .shipguard.yaml (R-C2), so the
+// file paths it reports. Policy lives only in .shipguard.yaml, so the
 // repository's .gitleaksignore must not apply. gitleaks always loads
 // <source>/.gitleaksignore, whatever --gitleaks-ignore-path says, so:
 //   - git modes scan the git dir, which holds no committed files;
