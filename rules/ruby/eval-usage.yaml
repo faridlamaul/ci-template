@@ -1,0 +1,23 @@
+rules:
+  - id: shipguard.ruby.eval-usage
+    languages: [ruby]
+    severity: ERROR
+    message: >-
+      eval and the instance_eval/class_eval string forms execute arbitrary Ruby
+      from a non-literal value. Parse data with JSON.parse and dispatch
+      behavior through an explicit lookup instead of evaluating strings.
+    patterns:
+      - pattern-either:
+          - pattern: eval($X, ...)
+          - pattern: Kernel.eval($X, ...)
+          - pattern: $O.instance_eval($X, ...)
+          - pattern: $O.class_eval($X, ...)
+          - pattern: $O.module_eval($X, ...)
+      - pattern-not: eval("...", ...)
+      - pattern-not: $O.instance_eval("...", ...)
+      - pattern-not: $O.class_eval("...", ...)
+      - pattern-not: $O.module_eval("...", ...)
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      confidence: HIGH

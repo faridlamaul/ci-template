@@ -1,0 +1,17 @@
+rules:
+  - id: shipguard.ruby.tls-verify-disabled
+    languages: [ruby]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is turned off, so any attacker on the
+      network path can impersonate the server. Use OpenSSL::SSL::VERIFY_PEER
+      and trust the right CA through ca_file or cert_store.
+    pattern-either:
+      - pattern: OpenSSL::SSL::VERIFY_NONE
+      - pattern: "$C.verify_mode = OpenSSL::SSL::VERIFY_NONE"
+      - pattern: "$M(..., verify_ssl: false, ...)"
+      - pattern: "$M(..., ssl: { verify: false }, ...)"
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH

@@ -1,0 +1,24 @@
+rules:
+  - id: shipguard.ruby.sql-injection
+    languages: [ruby]
+    severity: ERROR
+    message: >-
+      The SQL fragment is built with string interpolation or concatenation,
+      which allows SQL injection when any part is attacker controlled. Use
+      placeholders: where("name = ?", name) or where(name: name).
+    patterns:
+      - pattern-either:
+          - pattern: $M.where("...#{...}...", ...)
+          - pattern: $M.find_by_sql("...#{...}...", ...)
+          - pattern: $M.order("...#{...}...")
+          - pattern: $M.joins("...#{...}...")
+          - pattern: $M.select("...#{...}...")
+          - pattern: $C.execute("...#{...}...")
+          - pattern: $C.exec_query("...#{...}...", ...)
+          - pattern: $M.where($A + $B, ...)
+          - pattern: $M.find_by_sql($A + $B, ...)
+          - pattern: $C.execute($A + $B)
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      confidence: MEDIUM
