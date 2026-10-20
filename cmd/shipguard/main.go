@@ -15,6 +15,7 @@ import (
 
 	"github.com/faridlamaul/shipguard/internal/exitcode"
 	"github.com/faridlamaul/shipguard/internal/finding"
+	"github.com/faridlamaul/shipguard/internal/gitx"
 	"github.com/faridlamaul/shipguard/internal/platform"
 	"github.com/faridlamaul/shipguard/internal/policy"
 	"github.com/faridlamaul/shipguard/internal/report"
@@ -87,6 +88,7 @@ func newRoot(getenv func(string) string, stdout, stderr io.Writer) (*cobra.Comma
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			gitx.SetConfig(platform.BitbucketPipeGitConfig(getenv))
 			return resolveFlags(cmd.Flags(), g, getenv)
 		},
 	}

@@ -27,10 +27,21 @@ func (e *gitError) Error() string {
 
 func (e *gitError) Unwrap() error { return e.err }
 
+// extraConfig holds "key=value" settings passed as -c to every git call.
+var extraConfig []string
+
+// SetConfig sets git configuration applied to every git call, for example a
+// proxy the CI environment needs. Each entry is "key=value".
+func SetConfig(kv []string) { extraConfig = kv }
+
 // git runs git in dir without ever prompting for credentials. HTTP transfers
 // slower than 1000 B/s for 60s are aborted so a stalled fetch cannot hang.
 func git(dir string, args ...string) ([]byte, error) {
-	full := append([]string{"-c", "color.ui=false", "-c", "log.showSignature=false"}, args...)
+	full := []string{"-c", "color.ui=false", "-c", "log.showSignature=false"}
+	for _, kv := range extraConfig {
+		full = append(full, "-c", kv)
+	}
+	full = append(full, args...)
 	cmd := exec.Command("git", full...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C",

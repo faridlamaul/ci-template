@@ -246,3 +246,17 @@ func TestIsAncestor(t *testing.T) {
 		t.Error("option-like revision: want error")
 	}
 }
+
+func TestSetConfigAppliesToEveryCall(t *testing.T) {
+	isolate(t)
+	dir := t.TempDir()
+	if _, err := git(dir, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	SetConfig([]string{"shipguard.test=yes"})
+	t.Cleanup(func() { SetConfig(nil) })
+	out, err := git(dir, "config", "--get", "shipguard.test")
+	if err != nil || strings.TrimSpace(string(out)) != "yes" {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+}

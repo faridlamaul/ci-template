@@ -1,6 +1,8 @@
 // Package platform detects the CI platform and the triggering event.
 package platform
 
+import "strings"
+
 // Event is the kind of CI trigger: pr, push, tag, schedule or manual.
 type Event string
 
@@ -11,6 +13,33 @@ const (
 	EventSchedule Event = "schedule"
 	EventManual   Event = "manual"
 )
+
+// BitbucketPipeProxy is the Pipelines auth proxy as seen from a pipe, which
+// runs in its own container; steps reach it at localhost:29418.
+const BitbucketPipeProxy = "http://host.docker.internal:29418"
+
+// BitbucketPipe reports whether shipguard runs as a Bitbucket pipe.
+func BitbucketPipe(getenv func(string) string) bool {
+	return getenv("BITBUCKET_BUILD_NUMBER") != "" && getenv("BITBUCKET_PIPE_STORAGE_DIR") != ""
+}
+
+// BitbucketPipeGitConfig returns the git settings a Bitbucket pipe needs to
+// fetch from origin. The clone's .git/config routes origin through
+// localhost:29418, which a pipe cannot reach, so the proxy is overridden for
+// that origin. It returns nil outside a pipe or for an unexpected origin.
+func BitbucketPipeGitConfig(getenv func(string) string) []string {
+	if !BitbucketPipe(getenv) {
+		return nil
+	}
+	origin := getenv("BITBUCKET_GIT_HTTP_ORIGIN")
+	if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
+		return nil
+	}
+	if strings.ContainsAny(origin, "= \t\r\n") {
+		return nil
+	}
+	return []string{"http." + origin + ".proxy=" + BitbucketPipeProxy + "/"}
+}
 
 // Context describes where and why shipguard is running.
 type Context struct {

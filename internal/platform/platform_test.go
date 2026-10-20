@@ -85,3 +85,35 @@ func TestContextJSONKeys(t *testing.T) {
 		t.Errorf("json = %s, want %s", b, want)
 	}
 }
+
+func TestBitbucketPipeGitConfig(t *testing.T) {
+	pipe := map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "BITBUCKET_PIPE_STORAGE_DIR": "/x"}
+	with := func(origin string) map[string]string {
+		m := map[string]string{"BITBUCKET_GIT_HTTP_ORIGIN": origin}
+		for k, v := range pipe {
+			m[k] = v
+		}
+		return m
+	}
+	tests := []struct {
+		name string
+		env  map[string]string
+		want []string
+	}{
+		{"pipe", with("http://bitbucket.org/ws/repo"), []string{"http.http://bitbucket.org/ws/repo.proxy=http://host.docker.internal:29418/"}},
+		{"step image", map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "BITBUCKET_GIT_HTTP_ORIGIN": "http://bitbucket.org/ws/repo"}, nil},
+		{"not bitbucket", map[string]string{"BITBUCKET_PIPE_STORAGE_DIR": "/x", "BITBUCKET_GIT_HTTP_ORIGIN": "http://bitbucket.org/ws/repo"}, nil},
+		{"no origin", pipe, nil},
+		{"not http", with("ssh://git@bitbucket.org/ws/repo"), nil},
+		{"equals sign", with("http://bitbucket.org/ws/repo.proxy=http://evil:1/?a"), nil},
+		{"whitespace", with("http://bitbucket.org/ws/repo\nx"), nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BitbucketPipeGitConfig(env(tc.env))
+			if len(got) != len(tc.want) || (len(got) == 1 && got[0] != tc.want[0]) {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
