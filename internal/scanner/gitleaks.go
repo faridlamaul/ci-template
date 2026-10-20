@@ -87,7 +87,7 @@ func (g *gitleaks) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 	ctx, cancel := withTimeout(ctx, t)
 	defer cancel()
 
-	report, err := tempReport(t)
+	report, err := tempReport(t, "gitleaks")
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (g *gitleaks) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 		return nil, err
 	}
 	if t.RawDir != "" {
-		if err := writeRaw(t.RawDir, fs); err != nil {
+		if err := writeRaw(t.RawDir, "gitleaks", fs); err != nil {
 			return nil, err
 		}
 	}
@@ -118,10 +118,10 @@ func (g *gitleaks) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 
 // tempReport creates an empty report file outside Dir and RawDir so the
 // unredacted report is never left in a scanned or published location.
-func tempReport(t Target) (string, error) {
-	f, err := os.CreateTemp("", "shipguard-gitleaks-*.json")
+func tempReport(t Target, tool string) (string, error) {
+	f, err := os.CreateTemp("", "shipguard-"+tool+"-*.json")
 	if err != nil {
-		return "", fmt.Errorf("create gitleaks report: %w", err)
+		return "", fmt.Errorf("create %s report: %w", tool, err)
 	}
 	name := f.Name()
 	f.Close()
@@ -150,16 +150,16 @@ func within(dir, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func writeRaw(rawDir string, fs []finding.Finding) error {
+func writeRaw(rawDir, tool string, fs []finding.Finding) error {
 	if err := os.MkdirAll(rawDir, 0o755); err != nil {
 		return fmt.Errorf("create raw dir: %w", err)
 	}
 	b, err := json.MarshalIndent(fs, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode gitleaks findings: %w", err)
+		return fmt.Errorf("encode %s findings: %w", tool, err)
 	}
-	if err := os.WriteFile(filepath.Join(rawDir, "gitleaks.json"), b, 0o644); err != nil {
-		return fmt.Errorf("write gitleaks raw: %w", err)
+	if err := os.WriteFile(filepath.Join(rawDir, tool+".json"), b, 0o644); err != nil {
+		return fmt.Errorf("write %s raw: %w", tool, err)
 	}
 	return nil
 }

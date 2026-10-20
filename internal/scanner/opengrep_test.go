@@ -86,8 +86,11 @@ func TestOpengrepArgsIncludeConsumerRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(args) < 4 {
+		t.Fatalf("args = %v", args)
+	}
 	want := []string{
-		"scan", "--json", "--output", filepath.Join(raw, "opengrep.json"),
+		"scan", "--json", "--output", args[3],
 		"--config", "/opt/shipguard/rules", "--config", "rules/a.yml", "--config", "rules/b.yml",
 		"--exclude-rule", "r.one", "--exclude-rule", "r.two",
 		"--exclude", "vendor", "--exclude", "*.gen.go", ".",
@@ -100,7 +103,7 @@ func TestOpengrepArgsIncludeConsumerRules(t *testing.T) {
 func TestOpengrepFatalErrorsAreErrors(t *testing.T) {
 	s := NewOpengrep(outputRunner(t, ogGolden(t, "fatal-error.json"), 0, nil), "/rules")
 	_, err := s.Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "Rule parse error") {
+	if err == nil || !strings.Contains(err.Error(), "Rule parse error") || strings.Contains(err.Error(), "foo(") {
 		t.Fatalf("want fatal error, got %v", err)
 	}
 	if _, err := ParseOpengrep(ogGolden(t, "fatal-error.json")); err == nil {
@@ -159,13 +162,26 @@ func TestOpengrepNormalizesPaths(t *testing.T) {
 	}
 }
 
-func TestOpengrepRawKept(t *testing.T) {
-	raw := t.TempDir()
-	s := NewOpengrep(outputRunner(t, ogGolden(t, "results.json"), 1, nil), "/rules")
-	if _, err := s.Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: raw}); err != nil {
+func TestOpengrepRawHasNoSourceLines(t *testing.T) {
+	raw := filepath.Join(t.TempDir(), "raw")
+	dir := t.TempDir()
+	var args []string
+	s := NewOpengrep(outputRunner(t, ogGolden(t, "results.json"), 1, &args), "/rules")
+	if _, err := s.Scan(context.Background(), Target{Dir: dir, RawDir: raw}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(raw, "opengrep.json")); err != nil {
+	b, err := os.ReadFile(filepath.Join(raw, "opengrep.json"))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "test.no-eval") || strings.Contains(string(b), "eval(x)") {
+		t.Fatalf("raw copy wrong: %s", b)
+	}
+	out := args[3]
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("temporary output not deleted: %v", err)
+	}
+	if within(dir, out) || within(raw, out) {
+		t.Fatalf("output %s is inside Dir or RawDir", out)
 	}
 }

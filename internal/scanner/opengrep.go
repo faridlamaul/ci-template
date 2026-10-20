@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
 )
@@ -71,7 +69,7 @@ func parseOpengrep(raw []byte, dir string) ([]finding.Finding, error) {
 	}
 	for _, e := range rep.Errors {
 		if e.Level == "error" {
-			return nil, fmt.Errorf("opengrep reported an error (rule %q): %s", e.RuleID, strings.TrimSpace(firstLine(e.Message)))
+			return nil, fmt.Errorf("opengrep reported an error (type %q, rule %q)", errType(e.Type), e.RuleID)
 		}
 	}
 	out := make([]finding.Finding, 0, len(rep.Results))
@@ -95,11 +93,13 @@ func parseOpengrep(raw []byte, dir string) ([]finding.Finding, error) {
 	return out, nil
 }
 
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
+// errType returns the error type when it is a plain string. The free-text
+// message is never used: it can embed source or pattern text.
+func errType(v any) string {
+	if s, ok := v.(string); ok {
+		return s
 	}
-	return s
+	return "unknown"
 }
 
 func (o *opengrep) args(t Target, output string) []string {
@@ -121,23 +121,13 @@ func (o *opengrep) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 	ctx, cancel := withTimeout(ctx, t)
 	defer cancel()
 
-	rawDir := t.RawDir
-	if rawDir == "" {
-		d, err := os.MkdirTemp("", "shipguard-opengrep-*")
-		if err != nil {
-			return nil, fmt.Errorf("create opengrep output dir: %w", err)
-		}
-		defer os.RemoveAll(d)
-		rawDir = d
-	} else if err := os.MkdirAll(rawDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create raw dir: %w", err)
+	// The verbatim report contains source lines, so it lives outside Dir and
+	// RawDir and is deleted; only normalized findings are kept.
+	output, err := tempReport(t, "opengrep")
+	if err != nil {
+		return nil, err
 	}
-	output := filepath.Join(rawDir, "opengrep.json")
-
-	// A stale file must never be mistaken for this run's output.
-	if err := os.Remove(output); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("remove stale opengrep output: %w", err)
-	}
+	defer os.Remove(output)
 
 	// Stderr is dropped: it can echo source code.
 	_, _, code, err := o.run(ctx, t.Dir, "opengrep", o.args(t, output)...)
@@ -151,5 +141,14 @@ func (o *opengrep) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 	if err != nil {
 		return nil, fmt.Errorf("read opengrep output: %w", err)
 	}
-	return parseOpengrep(raw, t.Dir)
+	fs, err := parseOpengrep(raw, t.Dir)
+	if err != nil {
+		return nil, err
+	}
+	if t.RawDir != "" {
+		if err := writeRaw(t.RawDir, "opengrep", fs); err != nil {
+			return nil, err
+		}
+	}
+	return fs, nil
 }
