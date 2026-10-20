@@ -1,0 +1,26 @@
+# shipguard's own policy. Everything is enforced at the defaults except the
+# paths that are vulnerable on purpose: the rule test targets, the fixtures
+# and the end-to-end tests that scan them.
+paths:
+  exclude:
+    - rules/**/*.go
+    - rules/**/*.py
+    - rules/**/*.js
+    - rules/**/*.ts
+    - rules/**/*.rb
+    - rules/**/*.rs
+    - "**/testdata/**"
+    - e2e/**
+
+exceptions:
+  # False positive: a throwaway value that the golden files under
+  # internal/scanner/testdata embed to test secret redaction.
+  - id: generic-api-key
+    path: internal/scanner/gitleaks_test.go
+    reason: "Fake secret used by the redaction tests, not a credential"
+    expires: 2027-06-30
+  # The image runs as root on purpose (see the comment in the Dockerfile).
+  - id: DS-0002
+    path: Dockerfile
+    reason: "GitHub Docker actions and CI job images need root to write to the workspace"
+    expires: 2027-06-30
