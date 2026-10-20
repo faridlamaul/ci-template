@@ -43,23 +43,6 @@ jobs:
       - name: Check vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
-  rules:
-    name: Rule tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # Installs the scanners pinned in versions.env and verifies their SHA-256,
-      # the same way the image build does.
-      - name: Install pinned scanners
-        run: sudo sh scripts/install-scanners.sh amd64
-
-      - name: Test rules
-        run: opengrep test rules/
-
   image:
     name: Image and e2e
     runs-on: ubuntu-latest
@@ -91,6 +74,13 @@ jobs:
         run: |
           docker run --rm shipguard:dev version
           docker run --rm --entrypoint sh shipguard:dev -c 'gitleaks version && opengrep --version && osv-scanner --version && trivy --version'
+
+      # Runs inside the image, so CI tests the exact opengrep binary that ships
+      # (the pinned asset is a musl build and does not run on the glibc runner).
+      - name: Test rules
+        run: >
+          docker run --rm -v "$PWD/rules:/rules:ro"
+          --entrypoint opengrep shipguard:dev test /rules
 
       - name: End-to-end tests
         env:
