@@ -93,6 +93,7 @@ func (c CodeInsights) Publish(ctx context.Context, r finding.Result, d policy.De
 	if d.ExitCode() != 0 {
 		result = "FAILED"
 	}
+	r.Findings = reportable(r.Findings, d)
 	anns, more := annotations(r, d)
 	details := firstLine(Summary(r, d, 0))
 	if more > 0 {

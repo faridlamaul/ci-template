@@ -47,8 +47,10 @@ func Report(ctx context.Context, dir, format string, r finding.Result, d policy.
 	case "none":
 		return nil
 	case "sarif":
-		return writeSARIFFile(dir, r, d)
+		r.Findings = reportable(r.Findings, d)
+		return writeSARIFFile(dir, r)
 	case "gitlab":
+		r.Findings = reportable(r.Findings, d)
 		return WriteGitLab(filepath.Join(dir, outDir), r, r.ShipguardVersion, time.Now())
 	case "bitbucket":
 		if getenv("CODE_INSIGHTS") == "false" {
@@ -75,7 +77,7 @@ func codeInsightsFromEnv(pc platform.Context, getenv func(string) string) CodeIn
 	}
 }
 
-func writeSARIFFile(dir string, r finding.Result, d policy.Decision) error {
+func writeSARIFFile(dir string, r finding.Result) error {
 	path := filepath.Join(dir, SARIFFile)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
@@ -84,7 +86,7 @@ func writeSARIFFile(dir string, r finding.Result, d policy.Decision) error {
 	if err != nil {
 		return fmt.Errorf("create sarif: %w", err)
 	}
-	if err := WriteSARIF(f, r, d, r.ShipguardVersion); err != nil {
+	if err := WriteSARIF(f, r, r.ShipguardVersion); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("write sarif: %w", err)
 	}
@@ -92,4 +94,26 @@ func writeSARIFFile(dir string, r finding.Result, d policy.Decision) error {
 		return fmt.Errorf("close sarif: %w", err)
 	}
 	return nil
+}
+
+// reportable drops the findings that an active exception suppressed (d.Suppressed):
+// GitHub code scanning ignores SARIF suppressions, so native platform reports
+// leave them out. They stay in findings.json and the summary. Findings are
+// matched on their full identity (fingerprint, id, file, line), so an empty
+// fingerprint never drops unrelated findings.
+func reportable(fs []finding.Finding, d policy.Decision) []finding.Finding {
+	if len(d.Suppressed) == 0 {
+		return fs
+	}
+	drop := make(map[annKey]bool, len(d.Suppressed))
+	for _, f := range d.Suppressed {
+		drop[keyOf(f)] = true
+	}
+	out := make([]finding.Finding, 0, len(fs))
+	for _, f := range fs {
+		if !drop[keyOf(f)] {
+			out = append(out, f)
+		}
+	}
+	return out
 }

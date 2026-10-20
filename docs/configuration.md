@@ -90,6 +90,7 @@ exceptions:
 - `id`, `reason` and `expires` are required. A missing field is a config error.
 - `expires` is a date in `YYYY-MM-DD` form. The exception stays active through the end of that day (UTC) and stops suppressing the next day. An expired exception that matched a finding is listed in the summary; one that matches nothing is not reported.
 - License findings have the id `license:<SPDX>`, for example `license:AGPL-3.0`. Use that as the exception `id`.
+- Findings suppressed by an exception are left out of SARIF, GitLab and Bitbucket reports; they remain in .shipguard/findings.json and the summary.
 - This file is the only place to suppress a finding. Scanner ignore files and inline comments are ignored (see [Scanner-native config is ignored](#scanner-native-config-is-ignored)).
 
 ## Denying licenses
