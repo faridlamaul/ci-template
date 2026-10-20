@@ -6,15 +6,14 @@ rules:
       MD5, SHA-1, DES and RC4 are broken for security purposes. Use SHA-256 or
       SHA-3 for hashing, bcrypt, scrypt or argon2 for passwords, and AES-GCM
       for encryption.
-    pattern-either:
-      - pattern: $C.createHash("md5")
-      - pattern: $C.createHash("sha1")
-      - pattern: $C.createHash('md5')
-      - pattern: $C.createHash('sha1')
-      - pattern: $C.createCipheriv("des", ...)
-      - pattern: $C.createCipheriv("des-ede3", ...)
-      - pattern: $C.createCipheriv("rc4", ...)
-      - pattern: $C.createCipher(...)
+    patterns:
+      - pattern-either:
+          - pattern: $C.createHash($ALG)
+          - pattern: $C.createCipheriv($ALG, ...)
+          - pattern: $C.createDecipheriv($ALG, ...)
+      - metavariable-regex:
+          metavariable: $ALG
+          regex: (?i)^["'](md5|sha-?1|des(-.*)?|rc4|rc2(-.*)?|bf(-.*)?|blowfish)["']$
     metadata:
       category: security
       cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"

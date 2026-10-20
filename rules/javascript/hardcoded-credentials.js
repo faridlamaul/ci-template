@@ -11,5 +11,11 @@ function good() {
   const dbPassword = process.env.DB_PASSWORD;
   // ok: shipguard.javascript.hardcoded-credentials
   const tokenHeader = "";
-  return [dbPassword, tokenHeader];
+  // ok: shipguard.javascript.hardcoded-credentials
+  const tokenUrl = "https://auth.example.com/token";
+  // ok: shipguard.javascript.hardcoded-credentials
+  const passwordPrompt = "Enter your password now";
+  // ok: shipguard.javascript.hardcoded-credentials
+  const secretName = "db-credentials";
+  return [dbPassword, tokenHeader, tokenUrl, passwordPrompt, secretName];
 }

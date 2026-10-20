@@ -13,15 +13,48 @@ rules:
       - pattern: $REQ.params.$P
       - pattern: $REQ.body.$P
     pattern-sinks:
-      - pattern: fetch($URL, ...)
-      - pattern: axios($URL, ...)
-      - pattern: axios.$M($URL, ...)
-      - pattern: got($URL, ...)
-      - pattern: got.$M($URL, ...)
-      - pattern: http.get($URL, ...)
-      - pattern: https.get($URL, ...)
-      - pattern: http.request($URL, ...)
-      - pattern: https.request($URL, ...)
+      - patterns:
+          - pattern: fetch($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.head($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.delete($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.post($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.put($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: axios.patch($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: got($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: got.$M($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: https.get($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: http.request($URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern: https.request($URL, ...)
+          - focus-metavariable: $URL
     metadata:
       category: security
       cwe: "CWE-918: Server-Side Request Forgery (SSRF)"

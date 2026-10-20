@@ -16,3 +16,8 @@ function good(req, res) {
   // ok: shipguard.javascript.path-traversal
   fs.readFileSync("/etc/hostname");
 }
+
+function goodWrite(req) {
+  // ok: shipguard.javascript.path-traversal
+  fs.writeFileSync("/tmp/out.txt", req.body.content);
+}

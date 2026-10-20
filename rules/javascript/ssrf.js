@@ -12,3 +12,10 @@ async function good() {
   // ok: shipguard.javascript.ssrf
   await fetch("https://api.example.com/health");
 }
+
+async function goodBody(req) {
+  // ok: shipguard.javascript.ssrf
+  await fetch("https://api.example.com/x", { method: "POST", body: JSON.stringify(req.body.x) });
+  // ok: shipguard.javascript.ssrf
+  await axios.post("https://api.example.com/x", { q: req.body.q });
+}
