@@ -111,7 +111,8 @@ func blocks(f finding.Finding, cfg Config) bool {
 	if !ok {
 		return false
 	}
-	if strings.HasPrefix(f.ID, finding.LicensePrefix) && !licenseDenied(strings.TrimPrefix(f.ID, finding.LicensePrefix), cfg) {
+	license := finding.IsLicense(f)
+	if license && !licenseDenied(strings.TrimPrefix(f.ID, finding.LicensePrefix), cfg) {
 		return false
 	}
 	switch {
@@ -119,7 +120,8 @@ func blocks(f finding.Finding, cfg Config) bool {
 		return true
 	case f.Severity < t.Severity:
 		return false
-	case t.FixAvailableOnly:
+	case t.FixAvailableOnly && !license:
+		// A license has no fix: a denied one blocks regardless (R-C1).
 		return f.FixAvailable
 	}
 	return true

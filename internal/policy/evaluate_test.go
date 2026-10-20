@@ -157,19 +157,35 @@ func TestScannerErrorExitTwoEvenInAudit(t *testing.T) {
 }
 
 func TestLicenseDenyBlocks(t *testing.T) {
+	// The SCA threshold stays at the default (high, fix_available_only):
+	// licenses have no fix, so a denied license blocks anyway (R-C1).
 	cfg := Defaults()
-	cfg.Policy.FailOn[finding.CategorySCA] = Threshold{Severity: finding.Info}
 	cfg.Scanners.SCA.Licenses.Deny = []string{"AGPL-3.0-only"}
-	denied := fnd("license:agpl-3.0-only", finding.CategorySCA, finding.Info, false)
+	denied := fnd("license:agpl-3.0-only", finding.CategorySCA, finding.High, false)
 	allowed := fnd("license:MIT", finding.CategorySCA, finding.Info, false)
 	d := Evaluate(res(denied, allowed), cfg, false, evalNow)
 	if len(d.Blocking) != 1 || d.Blocking[0].ID != denied.ID {
 		t.Fatalf("%+v", d.Blocking)
 	}
-	// Denied license still must pass the threshold check.
-	cfg.Policy.FailOn[finding.CategorySCA] = Threshold{Severity: finding.High}
+	// Denied license still must pass the severity threshold.
+	cfg.Policy.FailOn[finding.CategorySCA] = Threshold{Severity: finding.Critical, FixAvailableOnly: true}
 	if d := Evaluate(res(denied), cfg, false, evalNow); len(d.Blocking) != 0 {
 		t.Fatal("threshold must also hold")
+	}
+}
+
+func TestLicenseDenyBlocksUnderDefaults(t *testing.T) {
+	cfg := Defaults()
+	cfg.Scanners.SCA.Licenses.Deny = []string{"AGPL-3.0"}
+	f := fnd("license:AGPL-3.0-only", finding.CategorySCA, finding.High, false)
+	d := Evaluate(res(f), cfg, false, evalNow)
+	if len(d.Blocking) != 1 || d.Result != "fail" || d.ExitCode() != 1 {
+		t.Fatalf("denied license under defaults: result=%s exit=%d blocking=%+v", d.Result, d.ExitCode(), d.Blocking)
+	}
+	// A non-license SCA finding without a fix still does not block.
+	vuln := fnd("GHSA-x", finding.CategorySCA, finding.High, false)
+	if d := Evaluate(res(vuln), cfg, false, evalNow); len(d.Blocking) != 0 {
+		t.Fatalf("vuln without fix must not block: %+v", d.Blocking)
 	}
 }
 
