@@ -22,6 +22,7 @@ type Target struct {
 
 	// sast
 	Rules, DisableRules []string
+	SASTDefaultExcludes bool // also pass OpengrepDefaultExcludes
 
 	// sca
 	DenyLicenses []string

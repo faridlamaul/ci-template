@@ -244,3 +244,17 @@ func TestParseExpiresForms(t *testing.T) {
 		t.Errorf("timestamp accepted: %v", err)
 	}
 }
+
+func TestSASTDefaultExcludes(t *testing.T) {
+	if !Defaults().Scanners.SAST.DefaultExcludes {
+		t.Error("scanners.sast.default_excludes must default to true")
+	}
+	c, err := Parse([]byte("scanners:\n  sast: { default_excludes: false }\n"))
+	if err != nil || c.Scanners.SAST.DefaultExcludes || !c.Scanners.SAST.Enabled {
+		t.Fatalf("false: %+v err=%v", c.Scanners.SAST, err)
+	}
+	c, err = Parse([]byte("scanners:\n  sast: { enabled: true }\n"))
+	if err != nil || !c.Scanners.SAST.DefaultExcludes {
+		t.Fatalf("unset: %+v err=%v", c.Scanners.SAST, err)
+	}
+}

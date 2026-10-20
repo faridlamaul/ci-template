@@ -880,3 +880,25 @@ func TestScanMissingRulesFailsClosed(t *testing.T) {
 	// Not checked when SAST does not run.
 	runScan(t, Options{Dir: r.Dir, Ctx: push, Categories: []finding.Category{finding.CategorySCA}, Scanners: []scanner.Scanner{sast}})
 }
+
+// TestScanPassesSASTDefaultExcludes: the base policy decides, so a PR cannot
+// turn scanners.sast.default_excludes off for itself.
+func TestScanPassesSASTDefaultExcludes(t *testing.T) {
+	for _, tc := range []struct {
+		name, base, head string
+		want             bool
+	}{
+		{"default", "", "", true},
+		{"base false", "version: 1\nscanners:\n  sast: { default_excludes: false }\n", "version: 1\nscanners:\n  sast: { default_excludes: false }\n", false},
+		{"pr cannot flip it", "version: 1\n", "version: 1\nscanners:\n  sast: { default_excludes: false }\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := prRepo(t, tc.base, tc.head)
+			sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir}
+			runScan(t, Options{Dir: r.Dir, Ctx: prCtx(), Scanners: []scanner.Scanner{sast}})
+			if len(sast.targets) == 0 || sast.targets[0].SASTDefaultExcludes != tc.want {
+				t.Fatalf("targets = %+v, want SASTDefaultExcludes=%v", sast.targets, tc.want)
+			}
+		})
+	}
+}

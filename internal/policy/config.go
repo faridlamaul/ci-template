@@ -142,9 +142,10 @@ type Config struct {
 			Enabled bool `yaml:"enabled"`
 		} `yaml:"secrets"`
 		SAST struct {
-			Enabled      bool     `yaml:"enabled"`
-			Rules        []string `yaml:"rules"`
-			DisableRules []string `yaml:"disable_rules"`
+			Enabled         bool     `yaml:"enabled"`
+			Rules           []string `yaml:"rules"`
+			DisableRules    []string `yaml:"disable_rules"`
+			DefaultExcludes bool     `yaml:"default_excludes"`
 		} `yaml:"sast"`
 		SCA struct {
 			Enabled  bool `yaml:"enabled"`
@@ -172,6 +173,7 @@ func Defaults() Config {
 	c.Mode = "enforce"
 	c.Scanners.Secrets.Enabled = true
 	c.Scanners.SAST.Enabled = true
+	c.Scanners.SAST.DefaultExcludes = true
 	c.Scanners.SCA.Enabled = true
 	c.Scanners.IaC.Enabled = true
 	c.Timeouts.PerScanner = 15 * time.Minute

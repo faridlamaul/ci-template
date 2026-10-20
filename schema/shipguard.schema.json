@@ -57,6 +57,9 @@
               "items": {
                 "type": "string"
               }
+            },
+            "default_excludes": {
+              "type": "boolean"
             }
           }
         },

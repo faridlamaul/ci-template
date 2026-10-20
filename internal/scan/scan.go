@@ -161,14 +161,15 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 	}
 
 	head := scanner.Target{
-		Dir:          o.Dir,
-		RawDir:       rawDir,
-		CacheDir:     filepath.Join(o.Dir, CacheDir),
-		Exclude:      append(slices.Clone(cfg.Paths.Exclude), AlwaysExclude...),
-		Timeout:      cfg.Timeouts.PerScanner,
-		Rules:        rules,
-		DisableRules: cfg.Scanners.SAST.DisableRules,
-		DenyLicenses: cfg.Scanners.SCA.Licenses.Deny,
+		Dir:                 o.Dir,
+		RawDir:              rawDir,
+		CacheDir:            filepath.Join(o.Dir, CacheDir),
+		Exclude:             append(slices.Clone(cfg.Paths.Exclude), AlwaysExclude...),
+		Timeout:             cfg.Timeouts.PerScanner,
+		Rules:               rules,
+		DisableRules:        cfg.Scanners.SAST.DisableRules,
+		SASTDefaultExcludes: cfg.Scanners.SAST.DefaultExcludes,
+		DenyLicenses:        cfg.Scanners.SCA.Licenses.Deny,
 	}
 
 	var results []headResult

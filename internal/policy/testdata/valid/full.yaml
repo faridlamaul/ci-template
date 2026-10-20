@@ -8,6 +8,7 @@ scanners:
     enabled: true
     rules: ["./.shipguard/rules/"]
     disable_rules: ["shipguard.go.weak-hash"]
+    default_excludes: false
   sca:
     enabled: true
     licenses: { deny: [AGPL-3.0] }

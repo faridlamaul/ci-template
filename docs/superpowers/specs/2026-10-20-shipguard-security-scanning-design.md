@@ -198,6 +198,7 @@ scanners:
     enabled: true
     rules: ["./.shipguard/rules/"]         # extra consumer rules: paths or URLs
     disable_rules: ["shipguard.go.weak-hash"]
+    default_excludes: true                 # skip vendor/, build/, dist/, test/, tests/, *_test.go, *.min.js ... (see A7)
   sca:
     enabled: true
     licenses: { deny: [] }                 # e.g. [AGPL-3.0]
@@ -445,10 +446,11 @@ Breaking any of them requires a major release.
 | Scanner | Neutralized | How (pinned version) |
 |---|---|---|
 | gitleaks 8.30.1 | `.gitleaks.toml`, `GITLEAKS_CONFIG*`, `.gitleaksignore`, `gitleaks:allow` | `--config` with a defaults-only file (`[extend] useDefault = true`), `--gitleaks-ignore-path` set to an empty temp dir, and `--ignore-gitleaks-allow`. gitleaks always loads `<source>/.gitleaksignore`, so history scans pass the git dir as the source, and directory scans go through a random temp symlink to the work tree, whose path prefix no committed fingerprint can match. |
-| opengrep 1.31.0 | `nosem`, `nosemgrep` and `noopengrep` comments, `.semgrepignore` | `--disable-nosem` and `--x-ignore-semgrepignore-files`. This also drops opengrep's built-in default ignore list (for example `tests/`), so only `paths.exclude` and shipguard's built-in excludes apply, passed as `--exclude`. `.gitignore` cannot hide tracked files. |
+| opengrep 1.31.0 | `nosem`, `nosemgrep` and `noopengrep` comments, `.semgrepignore` | `--disable-nosem` and `--x-ignore-semgrepignore-files`. This also drops opengrep's built-in default ignore list, which `scanners.sast.default_excludes` restores (see below). `paths.exclude` and shipguard's built-in excludes are passed as `--exclude`. `.gitignore` cannot hide tracked files. |
 | trivy 0.76.0 | `trivy.yaml`, `.trivyignore` | `--config ""` and `--ignorefile ""` on both the config and the license scans; trivy documents the empty value as "disables loading". |
 | osv-scanner 2.7.0 | `osv-scanner.toml`, `.gitignore` hiding lockfiles | `--config` with an empty file, which overrides every per-directory config, and `--no-ignore`. Directory-shaped excludes (`vendor/`, `**/testdata/**`, the built-in ones) are passed as `--x-exclude`, so osv-scanner does not walk them; an extraction error in an excluded path is ignored, one anywhere else fails the scan. |
 
+- **SAST default excludes:** `scanners.sast.default_excludes` (bool, default `true`). When true, shipguard passes this fixed list to opengrep as `--exclude`: `vendor/`, `build/`, `dist/`, `node_modules/`, `.venv/`, `.env/`, `.tox/`, `.npm/`, `.yarn/`, `_build/`, `.hg/`, `.svn/`, `CVS/`, `_darcs/`, `test/`, `tests/`, `*_test.go` and `*.min.js`. It mirrors opengrep 1.31.0's built-in defaults, observed by scanning a tree with and without `--x-ignore-semgrepignore-files`. The list is defined in code, not by the repository, and on a PR the policy comes from the base, so a PR cannot turn it off for itself. Set it to `false` to scan those paths.
 - **Consumer rules:** relative `scanners.sast.rules` paths, and absolute ones inside the repository, resolve in the base worktree on a PR, never in the PR head. A local rule path that does not exist is a config error (exit 2).
 - **Known gaps:**
   - trivy 0.76 has no switch to disable inline `trivy:ignore:<id>` comments in IaC files, so they still apply.

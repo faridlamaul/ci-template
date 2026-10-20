@@ -15,6 +15,18 @@ import (
 	"github.com/faridlamaul/shipguard/internal/finding"
 )
 
+// OpengrepDefaultExcludes is opengrep 1.31.0's built-in default ignore list,
+// observed by scanning a tree with and without --x-ignore-semgrepignore-files.
+// shipguard passes it as --exclude (gitignore syntax: a name matches at any
+// depth) unless scanners.sast.default_excludes is false. It is fixed in code,
+// so a repository cannot change it.
+var OpengrepDefaultExcludes = []string{
+	"vendor/", "build/", "dist/", "node_modules/",
+	".venv/", ".env/", ".tox/", ".npm/", ".yarn/", "_build/",
+	".hg/", ".svn/", "CVS/", "_darcs/",
+	"test/", "tests/", "*_test.go", "*.min.js",
+}
+
 type opengrep struct {
 	run          Runner
 	builtinRules string
@@ -191,11 +203,17 @@ func (o *opengrep) args(t Target, output string) []string {
 	for _, e := range t.Exclude {
 		a = append(a, "--exclude", e)
 	}
+	if t.SASTDefaultExcludes {
+		for _, e := range OpengrepDefaultExcludes {
+			a = append(a, "--exclude", e)
+		}
+	}
 	// Policy lives only in .shipguard.yaml (R-C2): nosem/nosemgrep/noopengrep
 	// comments and .semgrepignore files in the repository are not honoured.
 	// --x-ignore-semgrepignore-files is opengrep's (v1.31.0) only switch for
-	// that; it also drops opengrep's built-in default ignore list, so only
-	// shipguard's excludes above apply. .gitignore cannot hide tracked files.
+	// that; it also drops opengrep's built-in default ignore list, which
+	// OpengrepDefaultExcludes restores (scanners.sast.default_excludes).
+	// .gitignore cannot hide tracked files.
 	a = append(a, "--disable-nosem", "--x-ignore-semgrepignore-files")
 	// opengrep has no --metrics flag (v1.31.0) and sends no telemetry.
 	return append(a, ".")

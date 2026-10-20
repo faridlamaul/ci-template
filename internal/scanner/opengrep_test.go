@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -237,6 +238,35 @@ func TestNormalizeCheckIDConsumerRules(t *testing.T) {
 	} {
 		if got := normalizeCheckID(in, known); got != want {
 			t.Errorf("%q -> %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestOpengrepDefaultExcludes(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		var args []string
+		s := NewOpengrep(outputRunner(t, ogGolden(t, "empty.json"), 0, &args), "/opt/shipguard/rules")
+		_, err := s.Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: t.TempDir(), Exclude: []string{"docs/"}, SASTDefaultExcludes: on})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for i, a := range args {
+			if a == "--exclude" {
+				got = append(got, args[i+1])
+			}
+		}
+		want := []string{"docs/"}
+		if on {
+			want = append(want, OpengrepDefaultExcludes...)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("default_excludes=%v: --exclude = %v, want %v", on, got, want)
+		}
+	}
+	for _, p := range []string{"vendor/", "build/", "dist/", ".venv/", ".tox/", ".npm/", ".yarn/", "*.min.js", "test/", "tests/", "*_test.go"} {
+		if !slices.Contains(OpengrepDefaultExcludes, p) {
+			t.Errorf("OpengrepDefaultExcludes lacks %q", p)
 		}
 	}
 }
