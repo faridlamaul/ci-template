@@ -1,0 +1,20 @@
+rules:
+  - id: shipguard.go.weak-crypto
+    languages: [go]
+    severity: WARNING
+    message: >-
+      MD5, SHA-1, DES and RC4 are broken for security purposes (collisions or
+      small key and state weaknesses). Use SHA-256 or SHA-3 for hashing, bcrypt
+      or argon2 for passwords, and AES-GCM or ChaCha20-Poly1305 for encryption.
+    pattern-either:
+      - pattern: md5.New()
+      - pattern: md5.Sum(...)
+      - pattern: sha1.New()
+      - pattern: sha1.Sum(...)
+      - pattern: des.NewCipher(...)
+      - pattern: des.NewTripleDESCipher(...)
+      - pattern: rc4.NewCipher(...)
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      confidence: HIGH

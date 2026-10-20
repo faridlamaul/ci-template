@@ -1,0 +1,27 @@
+rules:
+  - id: shipguard.go.ssrf
+    languages: [go]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A URL taken from the HTTP request is fetched by the server, which lets
+      an attacker reach internal services and cloud metadata endpoints. Only
+      accept destinations from an allow-list, or build the URL from a fixed
+      host and validate the user-supplied part.
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+      - pattern: $R.Header.Get(...)
+    pattern-sinks:
+      - pattern: http.Get(...)
+      - pattern: http.Head(...)
+      - pattern: http.Post(...)
+      - pattern: |
+          ($C : *http.Client).Get(...)
+      - pattern: http.NewRequest($M, ...)
+      - pattern: http.NewRequestWithContext($CTX, $M, ...)
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      confidence: MEDIUM

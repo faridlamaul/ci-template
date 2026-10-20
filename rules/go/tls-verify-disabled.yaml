@@ -1,0 +1,13 @@
+rules:
+  - id: shipguard.go.tls-verify-disabled
+    languages: [go]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is turned off, so any attacker on the
+      network path can impersonate the server. Remove InsecureSkipVerify and
+      trust the right CA through RootCAs instead.
+    pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH

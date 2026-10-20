@@ -1,0 +1,28 @@
+rules:
+  - id: shipguard.go.sql-injection
+    languages: [go]
+    severity: ERROR
+    message: >-
+      The SQL statement is assembled with string formatting or concatenation,
+      which allows SQL injection when any part is attacker controlled. Use
+      placeholders ($1 or ?) and pass the values as query arguments.
+    patterns:
+      - pattern-either:
+          - pattern: $DB.Query(fmt.Sprintf(...), ...)
+          - pattern: $DB.QueryRow(fmt.Sprintf(...), ...)
+          - pattern: $DB.Exec(fmt.Sprintf(...), ...)
+          - pattern: $DB.QueryContext($CTX, fmt.Sprintf(...), ...)
+          - pattern: $DB.QueryRowContext($CTX, fmt.Sprintf(...), ...)
+          - pattern: $DB.ExecContext($CTX, fmt.Sprintf(...), ...)
+          - pattern: $DB.Query($A + $B, ...)
+          - pattern: $DB.QueryRow($A + $B, ...)
+          - pattern: $DB.Exec($A + $B, ...)
+          - pattern: $DB.QueryContext($CTX, $A + $B, ...)
+          - pattern: $DB.QueryRowContext($CTX, $A + $B, ...)
+          - pattern: $DB.ExecContext($CTX, $A + $B, ...)
+      - pattern-not: $DB.$M("..." + "...", ...)
+      - pattern-not: $DB.$M($CTX, "..." + "...", ...)
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      confidence: MEDIUM

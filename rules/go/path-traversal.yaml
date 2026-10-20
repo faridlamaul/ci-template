@@ -1,0 +1,30 @@
+rules:
+  - id: shipguard.go.path-traversal
+    languages: [go]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A value taken from the HTTP request reaches a file system call without
+      being reduced to a safe name, so "../" sequences can read or write files
+      outside the intended directory. Use filepath.Base on the value, or
+      resolve the path and verify it stays inside the allowed root.
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+      - pattern: $R.PathValue(...)
+    pattern-sanitizers:
+      - pattern: filepath.Base(...)
+      - pattern: path.Base(...)
+    pattern-sinks:
+      - pattern: os.Open(...)
+      - pattern: os.OpenFile(...)
+      - pattern: os.ReadFile(...)
+      - pattern: os.WriteFile(...)
+      - pattern: os.Remove(...)
+      - pattern: os.RemoveAll(...)
+      - pattern: http.ServeFile($W, $R, ...)
+    metadata:
+      category: security
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      confidence: MEDIUM
