@@ -45,7 +45,7 @@ jobs:
 
       - name: Image end-to-end test
         if: steps.diff.outputs.changed == 'true'
-        run: make image-test
+        run: make e2e
 
       - name: Open pull request
         if: steps.diff.outputs.changed == 'true'
