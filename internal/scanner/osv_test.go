@@ -329,6 +329,35 @@ func TestOSVNeutralizesRepoConfig(t *testing.T) {
 	}
 }
 
+// TestOSVExtractionErrorIsError: osv-scanner reports a lockfile it cannot
+// parse only on stderr, and may still exit 0, 1 or 128 ("no packages").
+func TestOSVExtractionErrorIsError(t *testing.T) {
+	noSleep(t)
+	stderr := "Scanning dir .\nError during extraction: (extracting as javascript/packagelockjson) src/package-lock.json: could not extract: invalid character 't'\n"
+	for _, code := range []int{0, 1, 128} {
+		calls := 0
+		run := func(ctx context.Context, d, name string, a ...string) ([]byte, []byte, int, error) {
+			calls++
+			if out := argAfter(a, "--output-file"); out != "" && code != 128 {
+				if err := os.WriteFile(out, []byte(`{"results":[]}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return nil, []byte(stderr), code, nil
+		}
+		fs, err := NewOSV(run).Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: t.TempDir()})
+		if err == nil || fs != nil {
+			t.Fatalf("exit %d: want error, got fs=%v err=%v", code, fs, err)
+		}
+		if strings.Contains(err.Error(), "package-lock") || strings.Contains(err.Error(), "invalid character") {
+			t.Fatalf("exit %d: stderr leaked into error: %v", code, err)
+		}
+		if calls != 1 {
+			t.Fatalf("exit %d: calls = %d, want 1 (not retried)", code, calls)
+		}
+	}
+}
+
 func TestOSVEmptyOutputIsError(t *testing.T) {
 	noSleep(t)
 	s := NewOSV(osvRunner(t, nil, 0, nil, nil))

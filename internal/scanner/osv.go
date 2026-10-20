@@ -1,8 +1,10 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -238,6 +240,12 @@ func (o *osv) args(output, config string) []string {
 	return append(a, ".")
 }
 
+// osvExtractionFailed reports whether osv-scanner could not parse a manifest
+// or lockfile. It says so only on stderr and still exits 0, 1 or 128.
+func osvExtractionFailed(stderr []byte) bool {
+	return bytes.Contains(stderr, []byte("Error during extraction")) || bytes.Contains(stderr, []byte("could not extract"))
+}
+
 func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 	ctx, cancel := withTimeout(ctx, t)
 	defer cancel()
@@ -258,25 +266,28 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 	}
 
 	// Exit 128 means no packages were found: zero findings, not an error.
-	noPackages := false
+	noPackages, extractFailed := false, false
 	err = Retry(ctx, 3, osvSleep, func() error {
-		// Stderr is dropped: it can echo paths and package names.
-		_, _, code, err := o.run(ctx, t.Dir, "osv-scanner", o.args(output, config)...)
+		// Stderr is only inspected, never surfaced: it can echo paths and
+		// package names.
+		_, stderr, code, err := o.run(ctx, t.Dir, "osv-scanner", o.args(output, config)...)
 		if err != nil {
 			return fmt.Errorf("osv-scanner: %w", err)
 		}
 		switch code {
-		case 0, 1:
-			noPackages = false
-			return nil
-		case 128:
-			noPackages = true
+		case 0, 1, 128:
+			// Deterministic, so not retried.
+			extractFailed = osvExtractionFailed(stderr)
+			noPackages = code == 128
 			return nil
 		}
 		return fmt.Errorf("osv-scanner exited with code %d", code)
 	})
 	if err != nil {
 		return nil, err
+	}
+	if extractFailed {
+		return nil, errors.New("osv-scanner could not extract one or more manifests or lockfiles; fix or exclude them")
 	}
 
 	fs := []finding.Finding{}
