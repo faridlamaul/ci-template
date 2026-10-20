@@ -10,7 +10,7 @@ rules:
       cursor.execute("... WHERE id = %s", (value,)) or the ORM's bound
       parameters.
     pattern-sources:
-      - pattern: f"..."
+      - pattern: 'f"...{$X}..."'
       - pattern: '"...".format(...)'
       - pattern: '"..." % $X'
       - patterns:

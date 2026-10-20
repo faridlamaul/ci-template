@@ -15,3 +15,8 @@ def good(text)
   # ok: shipguard.ruby.unsafe-deserialization
   YAML.load(File.read("config/app.yml"))
 end
+
+def warn_local
+  # ruleid: shipguard.ruby.unsafe-deserialization
+  Marshal.load(File.binread("cache.bin"))
+end

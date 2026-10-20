@@ -45,8 +45,11 @@ Assumptions:
 - JavaScript: `yaml.load` is treated as safe, which holds for js-yaml 4. On
   js-yaml 3 `yaml.load` is unsafe by default; upgrade the library.
 - Ruby: `YAML.load` and `Psych.load` are safe by default since Ruby 3.1
-  (Psych 4) and are not flagged; `unsafe_load`, `Marshal.load` and Oj object
-  mode are.
+  (Psych 4) and are not flagged. `unsafe-deserialization` (WARNING) flags
+  `unsafe_load`, `Marshal.load` and Oj object mode from any source;
+  `unsafe-deserialization-request` (ERROR) requires request data to reach them.
+- JavaScript: `node-serialize` `unserialize` is always ERROR because it has no
+  safe use.
 - Python: `unsafe-deserialization` (WARNING) flags any use;
   `unsafe-deserialization-request` (ERROR) requires request data to reach the
   call.

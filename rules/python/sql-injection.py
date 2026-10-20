@@ -27,3 +27,5 @@ def good(cur, name):
     print(msg)
     # ok: shipguard.python.sql-injection
     cur.execute("SELECT 1 WHERE %s = %s", [msg, msg])
+    # ok: shipguard.python.sql-injection
+    cur.execute(f"SELECT 1", ())

@@ -4,6 +4,8 @@ fn bad(key: &[u8]) {
     // ruleid: shipguard.rust.weak-cipher
     let _b = Rc4::new(key.into());
     // ruleid: shipguard.rust.weak-cipher
+    let _t = TdesEde3::new_from_slice(key);
+    // ruleid: shipguard.rust.weak-cipher
     let _c = Cipher::des_cbc();
 }
 

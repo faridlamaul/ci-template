@@ -24,6 +24,9 @@ rules:
           - pattern: $M.order($Q)
           - focus-metavariable: $Q
       - patterns:
+          - pattern: $M.select($Q)
+          - focus-metavariable: $Q
+      - patterns:
           - pattern: $M.joins($Q)
           - focus-metavariable: $Q
       - patterns:

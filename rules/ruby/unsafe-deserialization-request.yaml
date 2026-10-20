@@ -1,0 +1,29 @@
+rules:
+  - id: shipguard.ruby.unsafe-deserialization-request
+    languages: [ruby]
+    mode: taint
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is deserialized with Marshal, YAML.unsafe_load
+      or Oj object mode, which lets a client run arbitrary code on the server.
+      Parse request data with JSON.parse or YAML.safe_load.
+    pattern-sources:
+      - pattern: params[...]
+      - pattern: params.fetch(...)
+      - pattern: request.body
+      - pattern: request.body.read
+      - pattern: request.raw_post
+      - pattern: cookies[...]
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: Marshal.load($X)
+              - pattern: Marshal.restore($X)
+              - pattern: YAML.unsafe_load($X)
+              - pattern: Psych.unsafe_load($X)
+              - pattern: "Oj.load($X, ..., mode: :object, ...)"
+          - focus-metavariable: $X
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      confidence: HIGH

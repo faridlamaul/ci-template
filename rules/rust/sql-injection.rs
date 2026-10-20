@@ -32,3 +32,12 @@ fn good_log(name: &str) {
     let msg = format!("looking up {}", name);
     println!("{}", msg);
 }
+
+fn good_reqwest(client: &reqwest::blocking::Client, id: u32) {
+    // ok: shipguard.rust.sql-injection
+    let req = client.get(format!("https://api.example.com/{}", id)).build().unwrap();
+    // ok: shipguard.rust.sql-injection
+    client.execute(req).unwrap();
+    // ok: shipguard.rust.sql-injection
+    client.get("https://api.example.com").query(&[("q", format!("{}", id))]);
+}

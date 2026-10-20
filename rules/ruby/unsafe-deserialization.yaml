@@ -1,10 +1,11 @@
 rules:
   - id: shipguard.ruby.unsafe-deserialization
     languages: [ruby]
-    severity: ERROR
+    severity: WARNING
     message: >-
       Marshal.load, YAML.unsafe_load and Oj in object mode can instantiate
-      arbitrary objects and execute code from crafted input. Use JSON.parse, or
+      arbitrary objects and execute code if the data is ever attacker
+      influenced. Make sure the source is trusted, or use JSON.parse or
       YAML.safe_load with permitted classes listed explicitly. (YAML.load is
       safe by default on Ruby 3.1+ with Psych 4 and is not flagged.)
     patterns:
@@ -17,4 +18,4 @@ rules:
     metadata:
       category: security
       cwe: "CWE-502: Deserialization of Untrusted Data"
-      confidence: HIGH
+      confidence: MEDIUM

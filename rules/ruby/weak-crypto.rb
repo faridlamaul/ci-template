@@ -10,6 +10,8 @@ def bad(data)
   OpenSSL::Cipher.new("RC4")
   # ruleid: shipguard.ruby.weak-crypto
   OpenSSL::Cipher.new("DES")
+  # ruleid: shipguard.ruby.weak-crypto
+  OpenSSL::Cipher.new("DES-EDE3-CBC")
 end
 
 def good(data)

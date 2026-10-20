@@ -17,6 +17,8 @@ func bad(data, key []byte) {
 	rc4.NewCipher(key)
 	// ruleid: shipguard.go.weak-crypto
 	des.NewCipher(key)
+	// ruleid: shipguard.go.weak-crypto
+	des.NewTripleDESCipher(key)
 }
 
 func good(data []byte) {
