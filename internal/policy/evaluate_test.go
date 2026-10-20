@@ -173,6 +173,16 @@ func TestLicenseDenyBlocks(t *testing.T) {
 	}
 }
 
+func TestLicenseDenyMatchesFamily(t *testing.T) {
+	cfg := Defaults()
+	cfg.Policy.FailOn[finding.CategorySCA] = Threshold{Severity: finding.Info}
+	cfg.Scanners.SCA.Licenses.Deny = []string{"AGPL-3.0"}
+	f := fnd("license:AGPL-3.0-only", finding.CategorySCA, finding.High, false)
+	if d := Evaluate(res(f), cfg, false, evalNow); len(d.Blocking) != 1 {
+		t.Fatalf("deny AGPL-3.0 must block AGPL-3.0-only: %+v", d.Blocking)
+	}
+}
+
 func TestEmptyModeFailsClosed(t *testing.T) {
 	cfg := Defaults()
 	cfg.Mode = ""

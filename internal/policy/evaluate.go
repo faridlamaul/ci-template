@@ -129,7 +129,7 @@ func blocks(f finding.Finding, cfg Config) bool {
 
 func licenseDenied(spdx string, cfg Config) bool {
 	for _, d := range cfg.Scanners.SCA.Licenses.Deny {
-		if strings.EqualFold(d, spdx) {
+		if finding.LicenseKey(d) == finding.LicenseKey(spdx) {
 			return true
 		}
 	}

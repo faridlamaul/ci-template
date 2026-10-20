@@ -77,3 +77,15 @@ func TestResultRoundTrip(t *testing.T) {
 		t.Fatalf("got %+v want %+v", got, r)
 	}
 }
+
+func TestLicenseKey(t *testing.T) {
+	cases := map[string]string{
+		"GPL-3.0": "gpl-3.0", "GPL-3.0-only": "gpl-3.0", "GPL-3.0-or-later": "gpl-3.0", "GPL-3.0+": "gpl-3.0",
+		" AGPL-3.0-ONLY ": "agpl-3.0", "MIT": "mit", "Apache-2.0": "apache-2.0", "": "",
+	}
+	for in, want := range cases {
+		if got := LicenseKey(in); got != want {
+			t.Errorf("LicenseKey(%q) = %q want %q", in, got, want)
+		}
+	}
+}

@@ -7,63 +7,28 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
 )
 
-// trivySleep is the backoff sleep used between DB download attempts; tests
+// trivySleep is the backoff sleep used between `trivy config` attempts; tests
 // replace it.
 var trivySleep = time.Sleep
-
-// trivyDBReady records the cache dirs whose DB download already succeeded in
-// this process, so the two trivy scanners download it once. Failures are not
-// recorded, so a later scan retries.
-var (
-	trivyDBMu    sync.Mutex
-	trivyDBReady = map[string]bool{}
-)
-
-func resetTrivyDB() {
-	trivyDBMu.Lock()
-	defer trivyDBMu.Unlock()
-	trivyDBReady = map[string]bool{}
-}
 
 // trivyCache returns the trivy cache directory under the target cache dir.
 func trivyCache(t Target) string { return filepath.Join(t.CacheDir, "trivy") }
 
-// ensureTrivyDB downloads the trivy DB into the cache once per process
-// (Retry(3) on failure). It is cheap after the first success. Concurrent
-// callers serialize on the lock, so only one downloads.
-func ensureTrivyDB(ctx context.Context, run Runner, t Target) error {
-	cache := trivyCache(t)
-	trivyDBMu.Lock()
-	defer trivyDBMu.Unlock()
-	if trivyDBReady[cache] {
-		return nil
-	}
-	args := []string{"fs", "--download-db-only", "--cache-dir", cache}
-	if repo := os.Getenv("SHIPGUARD_TRIVY_DB_REPOSITORY"); repo != "" {
-		args = append(args, "--db-repository", repo)
-	}
-	err := Retry(ctx, 3, trivySleep, func() error {
-		// Stderr is dropped: it can echo registry URLs and credentials hints.
-		_, _, code, err := run(ctx, t.Dir, "trivy", args...)
-		if err != nil {
-			return fmt.Errorf("trivy db download: %w", err)
+// trivySkipDirs maps the directory-shaped Exclude entries (ending in "/") to
+// --skip-dirs flags; glob patterns are applied centrally on the findings.
+func trivySkipDirs(t Target) []string {
+	var a []string
+	for _, e := range t.Exclude {
+		if d := strings.TrimRight(e, "/"); strings.HasSuffix(e, "/") && d != "" {
+			a = append(a, "--skip-dirs", d)
 		}
-		if code != 0 {
-			return fmt.Errorf("trivy db download exited with code %d", code)
-		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
-	trivyDBReady[cache] = true
-	return nil
+	return a
 }
 
 type trivyReport struct {
@@ -142,12 +107,6 @@ func ParseTrivyConfig(raw []byte) ([]finding.Finding, error) {
 	return out, nil
 }
 
-// licenseKey normalizes an SPDX id for deny matching: case-insensitive, and
-// trivy's "-only" suffix (AGPL-3.0-only) is equal to the bare id (AGPL-3.0).
-func licenseKey(s string) string {
-	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s)), "-only")
-}
-
 // ParseTrivyLicense converts a `trivy fs --scanners license` JSON report into
 // findings: high for a license in deny, info otherwise.
 func ParseTrivyLicense(raw []byte, deny []string) ([]finding.Finding, error) {
@@ -157,7 +116,7 @@ func ParseTrivyLicense(raw []byte, deny []string) ([]finding.Finding, error) {
 	}
 	denied := map[string]bool{}
 	for _, d := range deny {
-		denied[licenseKey(d)] = true
+		denied[finding.LicenseKey(d)] = true
 	}
 	out := []finding.Finding{}
 	for _, res := range rep.Results {
@@ -168,7 +127,7 @@ func ParseTrivyLicense(raw []byte, deny []string) ([]finding.Finding, error) {
 			}
 			id := "license:" + l.Name
 			sev := finding.Info
-			if denied[licenseKey(l.Name)] {
+			if denied[finding.LicenseKey(l.Name)] {
 				sev = finding.High
 			}
 			out = append(out, finding.Finding{
@@ -191,6 +150,7 @@ type trivy struct {
 	name     string
 	category finding.Category
 	rawName  string
+	retry    bool
 	args     func(t Target, output string) []string
 	parse    func(raw []byte, t Target) ([]finding.Finding, error)
 }
@@ -198,16 +158,15 @@ type trivy struct {
 // NewTrivyConfig returns the IaC scanner backed by `trivy config`.
 func NewTrivyConfig(run Runner) Scanner {
 	return &trivy{
-		run: run, name: "trivy-config", category: finding.CategoryIaC, rawName: "trivy-config",
+		run: run, name: "trivy-config", category: finding.CategoryIaC, rawName: "trivy-config", retry: true,
 		// `trivy config` has no --skip-db-update flag (it does not use the
 		// vulnerability DB); the checks bundle is fetched into the cache dir.
 		args: func(t Target, output string) []string {
 			a := []string{"config", "--format", "json", "--output", output, "--cache-dir", trivyCache(t)}
-			for _, e := range t.Exclude {
-				if d := strings.TrimRight(e, "/"); strings.HasSuffix(e, "/") && d != "" {
-					a = append(a, "--skip-dirs", d)
-				}
+			if repo := os.Getenv("SHIPGUARD_TRIVY_CHECKS_BUNDLE_REPOSITORY"); repo != "" {
+				a = append(a, "--checks-bundle-repository", repo)
 			}
+			a = append(a, trivySkipDirs(t)...)
 			return append(a, "--exit-code", "0", ".")
 		},
 		parse: func(raw []byte, _ Target) ([]finding.Finding, error) { return ParseTrivyConfig(raw) },
@@ -219,8 +178,10 @@ func NewTrivyLicense(run Runner) Scanner {
 	return &trivy{
 		run: run, name: "trivy-license", category: finding.CategorySCA, rawName: "trivy-license",
 		args: func(t Target, output string) []string {
-			return []string{"fs", "--scanners", "license", "--format", "json", "--output", output,
-				"--cache-dir", trivyCache(t), "--skip-db-update", "--exit-code", "0", "."}
+			a := []string{"fs", "--scanners", "license", "--format", "json", "--output", output,
+				"--cache-dir", trivyCache(t), "--skip-db-update"}
+			a = append(a, trivySkipDirs(t)...)
+			return append(a, "--exit-code", "0", ".")
 		},
 		parse: func(raw []byte, t Target) ([]finding.Finding, error) { return ParseTrivyLicense(raw, t.DenyLicenses) },
 	}
@@ -233,22 +194,29 @@ func (s *trivy) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 	ctx, cancel := withTimeout(ctx, t)
 	defer cancel()
 
-	if err := ensureTrivyDB(ctx, s.run, t); err != nil {
-		return nil, err
-	}
 	output, err := tempReport(t, s.rawName)
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(output)
 
-	// Stderr is dropped: it can echo paths and file contents.
-	_, _, code, err := s.run(ctx, t.Dir, "trivy", s.args(t, output)...)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", s.name, err)
+	attempts := 1
+	if s.retry { // config fetches the checks bundle over the network
+		attempts = 3
 	}
-	if code != 0 {
-		return nil, fmt.Errorf("%s exited with code %d", s.name, code)
+	err = Retry(ctx, attempts, trivySleep, func() error {
+		// Stderr is dropped: it can echo paths and file contents.
+		_, _, code, err := s.run(ctx, t.Dir, "trivy", s.args(t, output)...)
+		if err != nil {
+			return fmt.Errorf("%s: %w", s.name, err)
+		}
+		if code != 0 {
+			return fmt.Errorf("%s exited with code %d", s.name, code)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	raw, err := os.ReadFile(output)
 	if err != nil {

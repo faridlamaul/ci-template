@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -28,8 +27,7 @@ func noTrivySleep(t *testing.T) {
 	t.Helper()
 	old := trivySleep
 	trivySleep = func(time.Duration) {}
-	resetTrivyDB()
-	t.Cleanup(func() { trivySleep = old; resetTrivyDB() })
+	t.Cleanup(func() { trivySleep = old })
 }
 
 func TestParseTrivyConfigOnlyFailures(t *testing.T) {
@@ -40,13 +38,17 @@ func TestParseTrivyConfigOnlyFailures(t *testing.T) {
 	if len(fs) != 5 {
 		t.Fatalf("want 5 findings, got %d: %+v", len(fs), fs)
 	}
-	d := fs[0]
+	byID := map[string]finding.Finding{}
+	for _, f := range fs {
+		byID[f.ID] = f
+	}
+	d := byID["DS-0002"]
 	if d.ID != "DS-0002" || d.File != "Dockerfile" || d.Line != 0 || d.Severity != finding.High ||
 		d.Scanner != "trivy-config" || d.Category != finding.CategoryIaC || d.Message == "" ||
 		d.Fingerprint != finding.Fingerprint("DS-0002", "Dockerfile", "Image user should not be 'root'") {
 		t.Fatalf("dockerfile finding %+v", d)
 	}
-	if k := fs[2]; k.ID != "KSV-0001" || k.File != "k8s/pod.yaml" || k.Line != 7 || k.Severity != finding.Medium {
+	if k := byID["KSV-0001"]; k.ID != "KSV-0001" || k.File != "k8s/pod.yaml" || k.Line != 7 || k.Severity != finding.Medium {
 		t.Fatalf("k8s finding %+v", k)
 	}
 
@@ -87,13 +89,21 @@ func TestParseTrivyLicenseDeny(t *testing.T) {
 		t.Fatalf("mit %+v", m)
 	}
 	fs, err = ParseTrivyLicense(trivyGolden(t, "license.json"), nil)
-	if err != nil || fs[0].Severity != finding.Info || fs[1].Severity != finding.Info {
+	if err != nil || len(fs) != 2 || fs[0].Severity != finding.Info || fs[1].Severity != finding.Info {
 		t.Fatalf("no deny: %+v %v", fs, err)
 	}
 	// Exact SPDX ids and case-insensitive matches also deny.
 	fs, _ = ParseTrivyLicense(trivyGolden(t, "license.json"), []string{"mit"})
-	if byPkg2 := fs[1]; byPkg2.Package != "left-pad" || byPkg2.Severity != finding.High {
-		t.Fatalf("case-insensitive deny: %+v", fs)
+	for _, f := range fs {
+		if (f.Package == "left-pad") != (f.Severity == finding.High) {
+			t.Fatalf("case-insensitive deny: %+v", f)
+		}
+	}
+	// A deny entry covers the whole family: GPL-3.0 denies -or-later and +.
+	fam := `{"Results":[{"Target":"l","Licenses":[{"PkgName":"a","Name":"GPL-3.0-or-later"},{"PkgName":"b","Name":"GPL-3.0+"},{"PkgName":"c","Name":"LGPL-3.0"}]}]}`
+	fs, err = ParseTrivyLicense([]byte(fam), []string{"GPL-3.0"})
+	if err != nil || len(fs) != 3 || fs[0].Severity != finding.High || fs[1].Severity != finding.High || fs[2].Severity != finding.Info {
+		t.Fatalf("family deny: %+v %v", fs, err)
 	}
 }
 
@@ -116,25 +126,10 @@ type trivyCall struct {
 	args []string
 }
 
-// trivyRunner fakes trivy: the DB download succeeds (or fails dbFail times /
-// always when dbFail<0), and scans write golden to --output.
-func trivyRunner(t *testing.T, golden []byte, scanCode int, dbFail int, calls *[]trivyCall) Runner {
-	var mu sync.Mutex
+// trivyRunner fakes trivy: scans write golden to --output and exit scanCode.
+func trivyRunner(t *testing.T, golden []byte, scanCode int, calls *[]trivyCall) Runner {
 	return func(ctx context.Context, dir, name string, args ...string) ([]byte, []byte, int, error) {
-		mu.Lock()
-		defer mu.Unlock()
 		*calls = append(*calls, trivyCall{name, append([]string(nil), args...)})
-		for _, a := range args {
-			if a == "--download-db-only" {
-				if dbFail != 0 {
-					if dbFail > 0 {
-						dbFail--
-					}
-					return nil, []byte("SECRET-STDERR"), 1, nil
-				}
-				return nil, nil, 0, nil
-			}
-		}
 		for i, a := range args {
 			if a == "--output" && golden != nil {
 				if err := os.WriteFile(args[i+1], golden, 0o600); err != nil {
@@ -146,10 +141,10 @@ func trivyRunner(t *testing.T, golden []byte, scanCode int, dbFail int, calls *[
 	}
 }
 
-func TestTrivyDBDownloadRetriesThenErrors(t *testing.T) {
+func TestTrivyConfigRetriesThenErrors(t *testing.T) {
 	noTrivySleep(t)
 	var calls []trivyCall
-	s := NewTrivyLicense(trivyRunner(t, trivyGolden(t, "license.json"), 0, -1, &calls))
+	s := NewTrivyConfig(trivyRunner(t, nil, 1, &calls))
 	_, err := s.Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: t.TempDir(), CacheDir: t.TempDir()})
 	if err == nil || len(calls) != 3 {
 		t.Fatalf("err=%v calls=%d (want 3 attempts then error)", err, len(calls))
@@ -157,41 +152,41 @@ func TestTrivyDBDownloadRetriesThenErrors(t *testing.T) {
 	if strings.Contains(err.Error(), "SECRET-STDERR") {
 		t.Fatalf("stderr leaked: %v", err)
 	}
-	// A failure is not cached: the next scan tries again.
-	calls = nil
-	_, err = s.Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: t.TempDir(), CacheDir: t.TempDir()})
-	if err == nil || len(calls) != 3 {
-		t.Fatalf("second: err=%v calls=%d", err, len(calls))
+	// Runner errors are retried too.
+	n := 0
+	_, err = NewTrivyConfig(func(context.Context, string, string, ...string) ([]byte, []byte, int, error) {
+		n++
+		return nil, nil, -1, errors.New("boom")
+	}).Scan(context.Background(), Target{Dir: t.TempDir(), CacheDir: t.TempDir()})
+	if err == nil || n != 3 {
+		t.Fatalf("runner error: err=%v n=%d", err, n)
 	}
 }
 
-func TestTrivyDBDownloadOncePerProcess(t *testing.T) {
+func TestTrivyLicenseNoRetry(t *testing.T) {
 	noTrivySleep(t)
-	t.Setenv("SHIPGUARD_TRIVY_DB_REPOSITORY", "registry.example/trivy-db:2")
-	cache := t.TempDir()
 	var calls []trivyCall
-	run := trivyRunner(t, trivyGolden(t, "license.json"), 0, 1, &calls) // first attempt fails
-	lic, cfg := NewTrivyLicense(run), NewTrivyConfig(run)
-	tgt := func() Target { return Target{Dir: t.TempDir(), RawDir: t.TempDir(), CacheDir: cache} }
-	if _, err := lic.Scan(context.Background(), tgt()); err != nil {
+	_, err := NewTrivyLicense(trivyRunner(t, nil, 1, &calls)).Scan(context.Background(), Target{Dir: t.TempDir(), CacheDir: t.TempDir()})
+	if err == nil || len(calls) != 1 {
+		t.Fatalf("err=%v calls=%d (want 1)", err, len(calls))
+	}
+}
+
+func TestTrivyChecksBundleEnv(t *testing.T) {
+	noTrivySleep(t)
+	var calls []trivyCall
+	tgt := func() Target { return Target{Dir: t.TempDir(), RawDir: t.TempDir(), CacheDir: t.TempDir()} }
+	s := NewTrivyConfig(trivyRunner(t, trivyGolden(t, "config.json"), 0, &calls))
+	if _, err := s.Scan(context.Background(), tgt()); err != nil || contains(calls[0].args, "--checks-bundle-repository") {
+		t.Fatalf("unset: %v %v", err, calls[0].args)
+	}
+	t.Setenv("SHIPGUARD_TRIVY_CHECKS_BUNDLE_REPOSITORY", "registry.example/checks:2")
+	calls = nil
+	if _, err := s.Scan(context.Background(), tgt()); err != nil {
 		t.Fatal(err)
 	}
-	// The fake writes the license report; it parses as zero config findings.
-	if _, err := cfg.Scan(context.Background(), tgt()); err != nil {
-		t.Fatal(err)
-	}
-	var db []trivyCall
-	for _, c := range calls {
-		if contains(c.args, "--download-db-only") {
-			db = append(db, c)
-		}
-	}
-	if len(db) != 2 { // one failed attempt + one success, none for the second scanner
-		t.Fatalf("want 2 db calls, got %d", len(db))
-	}
-	want := []string{"fs", "--download-db-only", "--cache-dir", filepath.Join(cache, "trivy"), "--db-repository", "registry.example/trivy-db:2"}
-	if db[1].name != "trivy" || !reflect.DeepEqual(db[1].args, want) {
-		t.Fatalf("db args %v want %v", db[1].args, want)
+	if got := argAfter(calls[0].args, "--checks-bundle-repository"); got != "registry.example/checks:2" {
+		t.Fatalf("args %v", calls[0].args)
 	}
 }
 
@@ -217,7 +212,7 @@ func TestTrivyConfigScan(t *testing.T) {
 	noTrivySleep(t)
 	raw, cache := t.TempDir(), t.TempDir()
 	var calls []trivyCall
-	s := NewTrivyConfig(trivyRunner(t, trivyGolden(t, "config.json"), 0, 0, &calls))
+	s := NewTrivyConfig(trivyRunner(t, trivyGolden(t, "config.json"), 0, &calls))
 	if s.Name() != "trivy-config" || s.Category() != finding.CategoryIaC {
 		t.Fatalf("%s %s", s.Name(), s.Category())
 	}
@@ -250,23 +245,26 @@ func TestTrivyLicenseScan(t *testing.T) {
 	noTrivySleep(t)
 	raw, cache := t.TempDir(), t.TempDir()
 	var calls []trivyCall
-	s := NewTrivyLicense(trivyRunner(t, trivyGolden(t, "license.json"), 0, 0, &calls))
+	s := NewTrivyLicense(trivyRunner(t, trivyGolden(t, "license.json"), 0, &calls))
 	if s.Name() != "trivy-license" || s.Category() != finding.CategorySCA {
 		t.Fatalf("%s %s", s.Name(), s.Category())
 	}
-	fs, err := s.Scan(context.Background(), Target{Dir: "/src", RawDir: raw, CacheDir: cache, DenyLicenses: []string{"AGPL-3.0"}})
+	fs, err := s.Scan(context.Background(), Target{Dir: "/src", RawDir: raw, CacheDir: cache, DenyLicenses: []string{"AGPL-3.0"},
+		Exclude: []string{"vendor/", "**/*.gen"}})
 	if err != nil || len(fs) != 2 {
 		t.Fatalf("fs=%d err=%v", len(fs), err)
 	}
 	scan := calls[len(calls)-1]
 	out := argAfter(scan.args, "--output")
 	want := []string{"fs", "--scanners", "license", "--format", "json", "--output", out, "--cache-dir", filepath.Join(cache, "trivy"),
-		"--skip-db-update", "--exit-code", "0", "."}
+		"--skip-db-update", "--skip-dirs", "vendor", "--exit-code", "0", "."}
 	if !reflect.DeepEqual(scan.args, want) {
 		t.Fatalf("args\n got %v\nwant %v", scan.args, want)
 	}
-	if fs[0].Severity != finding.High && fs[1].Severity != finding.High {
-		t.Fatalf("deny not applied: %+v", fs)
+	for _, f := range fs {
+		if (f.Package == "agpl-pkg") != (f.Severity == finding.High) {
+			t.Fatalf("deny not applied: %+v", f)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(raw, "trivy-license.json")); err != nil {
 		t.Fatal(err)
@@ -278,16 +276,16 @@ func TestTrivyScanErrors(t *testing.T) {
 	tgt := func() Target { return Target{Dir: t.TempDir(), RawDir: t.TempDir(), CacheDir: t.TempDir()} }
 	var calls []trivyCall
 	// Non-zero exit is an error, without leaking stderr.
-	_, err := NewTrivyConfig(trivyRunner(t, trivyGolden(t, "config.json"), 1, 0, &calls)).Scan(context.Background(), tgt())
+	_, err := NewTrivyConfig(trivyRunner(t, trivyGolden(t, "config.json"), 1, &calls)).Scan(context.Background(), tgt())
 	if err == nil || strings.Contains(err.Error(), "SECRET-STDERR") {
 		t.Fatalf("exit 1: %v", err)
 	}
 	// Empty output is an error.
-	_, err = NewTrivyLicense(trivyRunner(t, nil, 0, 0, &calls)).Scan(context.Background(), tgt())
+	_, err = NewTrivyLicense(trivyRunner(t, nil, 0, &calls)).Scan(context.Background(), tgt())
 	if err == nil {
 		t.Fatal("missing output must error")
 	}
-	_, err = NewTrivyLicense(trivyRunner(t, []byte{}, 0, 0, &calls)).Scan(context.Background(), tgt())
+	_, err = NewTrivyLicense(trivyRunner(t, []byte{}, 0, &calls)).Scan(context.Background(), tgt())
 	if err == nil {
 		t.Fatal("empty output must error")
 	}
