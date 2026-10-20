@@ -32,8 +32,20 @@ const (
 	SchemaVersion = 1
 )
 
-// AlwaysExclude lists the paths never scanned, whatever the config says.
-var AlwaysExclude = []string{".shipguard/", ".shipguard-cache/", ".shipguard-action/", ".git/", "node_modules/", "**/node_modules/**"}
+// RuntimeExclude lists what shipguard itself writes or checks out into the
+// repository at run time: its outputs in .shipguard/ (not the whole
+// directory, which may hold consumer rules), the scanner cache and the
+// action checkout. It is never scanned.
+var RuntimeExclude = []string{
+	OutDir + "/findings.json", OutDir + "/policy.yaml", OutDir + "/raw/", OutDir + "/summary.md",
+	OutDir + "/gate.env", OutDir + "/*.sarif", OutDir + "/gl-*.json",
+	CacheDir + "/", ".shipguard-action/",
+}
+
+// AlwaysExclude lists the paths the SAST, SCA and IaC scanners never scan,
+// whatever the config says. Secrets use only RuntimeExclude, and only in a
+// directory scan, so a committed secret is never hidden (R-I3).
+var AlwaysExclude = append(slices.Clone(RuntimeExclude), ".git/", "node_modules/", "**/node_modules/**")
 
 // defaultsYAML is written to policy.yaml when the repository has no config;
 // policy.Parse turns it into policy.Defaults().
@@ -83,6 +95,7 @@ func ParseCategories(s string) ([]finding.Category, error) {
 // headResult is one scanner's outcome on the head tree.
 type headResult struct {
 	s        scanner.Scanner
+	t        scanner.Target
 	run      finding.ScannerRun
 	findings []finding.Finding
 }
@@ -135,12 +148,11 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		return finding.Result{}, policy.Config{}, fmt.Errorf("write effective policy: %w", err)
 	}
 
-	exclude := append(slices.Clone(cfg.Paths.Exclude), AlwaysExclude...)
 	head := scanner.Target{
 		Dir:          o.Dir,
 		RawDir:       rawDir,
 		CacheDir:     filepath.Join(o.Dir, CacheDir),
-		Exclude:      exclude,
+		Exclude:      append(slices.Clone(cfg.Paths.Exclude), AlwaysExclude...),
 		Timeout:      cfg.Timeouts.PerScanner,
 		Rules:        cfg.Scanners.SAST.Rules,
 		DisableRules: cfg.Scanners.SAST.DisableRules,
@@ -161,13 +173,20 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		}
 		t := head
 		if cat == finding.CategorySecrets {
+			// A history scan reports committed content only, so only the
+			// configured excludes apply; a directory scan also skips
+			// shipguard's run-time files.
+			t.Exclude = slices.Clone(cfg.Paths.Exclude)
 			switch {
 			case pr:
 				t.LogOpts = baseSHA + "..HEAD"
 			case o.Ctx.Event == platform.EventSchedule:
 				t.FullHistory = true
+			default:
+				t.Exclude = append(t.Exclude, RuntimeExclude...)
 			}
 		}
+		hr.t = t
 		start := now()
 		fs, err := s.Scan(ctx, t)
 		hr.run.DurationMS = now().Sub(start).Milliseconds()
@@ -187,7 +206,7 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 	}
 
 	if pr {
-		if err := markExisting(ctx, o.Dir, baseSHA, head, results, now); err != nil {
+		if err := markExisting(ctx, o.Dir, baseSHA, results, now); err != nil {
 			return finding.Result{}, policy.Config{}, err
 		}
 	}
@@ -202,12 +221,11 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 	if res.Context, err = json.Marshal(o.Ctx); err != nil {
 		return finding.Result{}, policy.Config{}, fmt.Errorf("encode context: %w", err)
 	}
-	var all []finding.Finding
+	res.Findings = []finding.Finding{}
 	for _, hr := range results {
 		res.Scanners = append(res.Scanners, hr.run)
-		all = append(all, hr.findings...)
+		res.Findings = append(res.Findings, finding.FilterPaths(hr.findings, hr.t.Exclude)...)
 	}
-	res.Findings = finding.FilterPaths(all, exclude)
 	if err := finding.WriteResult(filepath.Join(out, "findings.json"), res); err != nil {
 		return finding.Result{}, policy.Config{}, err
 	}
@@ -219,7 +237,7 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 // marks head findings whose fingerprint the base also has as existing, at
 // most as many per fingerprint as the base has. A base
 // failure turns the head run into an error and leaves its findings new.
-func markExisting(ctx context.Context, dir, baseSHA string, head scanner.Target, results []headResult, now func() time.Time) error {
+func markExisting(ctx context.Context, dir, baseSHA string, results []headResult, now func() time.Time) error {
 	baseRaw, err := os.MkdirTemp("", "shipguard-base-raw-*")
 	if err != nil {
 		return fmt.Errorf("create base raw dir: %w", err)
@@ -246,7 +264,7 @@ func markExisting(ctx context.Context, dir, baseSHA string, head scanner.Target,
 			hr.run.Status, hr.run.Error = finding.RunStatusError, "base scan failed: "+wtErr.Error()
 			continue
 		}
-		t := head
+		t := hr.t
 		t.Dir, t.RawDir = wt, baseRaw
 		start := now()
 		base, err := hr.s.Scan(ctx, t)

@@ -466,21 +466,73 @@ func TestScanAppliesExcludes(t *testing.T) {
 		fnd("opengrep", finding.CategorySAST, "vendor", "vendor/x.go"),
 		fnd("opengrep", finding.CategorySAST, "test", "src/a_test.go"),
 		fnd("opengrep", finding.CategorySAST, "out", ".shipguard/raw/x.json"),
+		fnd("opengrep", finding.CategorySAST, "sarif", ".shipguard/shipguard.sarif"),
 		fnd("opengrep", finding.CategorySAST, "cache", ".shipguard-cache/db"),
 		fnd("opengrep", finding.CategorySAST, "action", ".shipguard-action/a.sh"),
 		fnd("opengrep", finding.CategorySAST, "git", ".git/config"),
 		fnd("opengrep", finding.CategorySAST, "nm", "node_modules/a.js"),
 		fnd("opengrep", finding.CategorySAST, "nested-nm", "web/node_modules/pkg/a.js"),
+		fnd("opengrep", finding.CategorySAST, "own-dir", ".shipguard/app.py"),
 	}}
 
 	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Scanners: []scanner.Scanner{sast}})
 
-	if len(res.Findings) != 1 || res.Findings[0].ID != "keep" {
-		t.Errorf("findings = %+v, want only keep", res.Findings)
+	var ids []string
+	for _, f := range res.Findings {
+		ids = append(ids, f.ID)
 	}
-	want := []string{"vendor/", "**/*_test.go", ".shipguard/", ".shipguard-cache/", ".shipguard-action/", ".git/", "node_modules/", "**/node_modules/**"}
+	if !slices.Equal(ids, []string{"keep", "own-dir"}) {
+		t.Errorf("findings = %v, want keep and own-dir (only shipguard's outputs are excluded in .shipguard/)", ids)
+	}
+	want := append([]string{"vendor/", "**/*_test.go"}, append(slices.Clone(RuntimeExclude), ".git/", "node_modules/", "**/node_modules/**")...)
 	if got := sast.targets[0].Exclude; !slices.Equal(got, want) {
 		t.Errorf("Target.Exclude = %q, want %q", got, want)
+	}
+}
+
+// TestScanSecretsNotHiddenByExcludes: committed secrets are never hidden by
+// shipguard's built-in excludes (R-I3); only shipguard's own run-time files
+// are skipped in a directory scan, and nothing is skipped in a history scan.
+func TestScanSecretsNotHiddenByExcludes(t *testing.T) {
+	head := []finding.Finding{
+		fnd("gitleaks", finding.CategorySecrets, "own-dir", ".shipguard/x.env"),
+		fnd("gitleaks", finding.CategorySecrets, "nested-nm", "src/node_modules/cfg.js"),
+		fnd("gitleaks", finding.CategorySecrets, "nm", "node_modules/cfg.js"),
+		fnd("gitleaks", finding.CategorySecrets, "rules", ".shipguard/rules/r.yaml"),
+		fnd("gitleaks", finding.CategorySecrets, "output", ".shipguard/findings.json"),
+		fnd("gitleaks", finding.CategorySecrets, "raw", ".shipguard/raw/opengrep.json"),
+		fnd("gitleaks", finding.CategorySecrets, "glreport", ".shipguard/gl-sast-report.json"),
+		fnd("gitleaks", finding.CategorySecrets, "cache", ".shipguard-cache/trivy/db"),
+		fnd("gitleaks", finding.CategorySecrets, "action", ".shipguard-action/rules/x.go"),
+		fnd("gitleaks", finding.CategorySecrets, "user-excluded", "vendor/x.go"),
+	}
+	ids := func(res finding.Result) []string {
+		var out []string
+		for _, f := range res.Findings {
+			out = append(out, f.ID)
+		}
+		return out
+	}
+
+	isolate(t)
+	r := gitfixture.New(t)
+	commitFile(r, ".shipguard.yaml", "version: 1\npaths:\n  exclude: [\"vendor/\"]\n")
+	secrets := &fake{name: "gitleaks", cat: finding.CategorySecrets, headDir: r.Dir, head: head}
+	res, _ := runScan(t, Options{Dir: r.Dir, Ctx: platform.Context{Event: platform.EventPush}, Scanners: []scanner.Scanner{secrets}})
+	if got, want := ids(res), []string{"own-dir", "nested-nm", "nm", "rules"}; !slices.Equal(got, want) {
+		t.Errorf("push: findings = %v, want %v", got, want)
+	}
+	if got, want := secrets.targets[0].Exclude, append([]string{"vendor/"}, RuntimeExclude...); !slices.Equal(got, want) {
+		t.Errorf("push: Target.Exclude = %q, want %q", got, want)
+	}
+
+	// A history scan reports committed content only: nothing is skipped but
+	// the configured excludes.
+	pr, _ := prRepo(t, "version: 1\npaths:\n  exclude: [\"vendor/\"]\n", "version: 1\npaths:\n  exclude: [\"vendor/\"]\n")
+	secrets = &fake{name: "gitleaks", cat: finding.CategorySecrets, headDir: pr.Dir, head: head}
+	res, _ = runScan(t, Options{Dir: pr.Dir, Ctx: prCtx(), Scanners: []scanner.Scanner{secrets}})
+	if got := ids(res); len(got) != len(head)-1 || slices.Contains(got, "user-excluded") {
+		t.Errorf("pr: findings = %v, want all but user-excluded", got)
 	}
 }
 
