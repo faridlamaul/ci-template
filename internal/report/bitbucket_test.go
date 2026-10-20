@@ -141,6 +141,47 @@ func TestAnnotationsSkipInfoLicenses(t *testing.T) {
 	}
 }
 
+func reportDetails(t *testing.T, got []recorded) string {
+	t.Helper()
+	for _, rec := range got {
+		if rec.method == http.MethodPut {
+			var rep ciReport
+			if err := json.Unmarshal(rec.body, &rep); err != nil {
+				t.Fatal(err)
+			}
+			return rep.Details
+		}
+	}
+	t.Fatal("no report PUT")
+	return ""
+}
+
+// TestCodeInsightsNotesCappedAnnotations: past the 1000-annotation cap the
+// report says how many findings are not annotated.
+func TestCodeInsightsNotesCappedAnnotations(t *testing.T) {
+	srv, got := recorder(t, 200)
+	r := manyFindings(2500)
+	// Info licenses are never annotated, so they are not counted either.
+	r.Findings = append(r.Findings, finding.Finding{ID: "license:MIT", Category: finding.CategorySCA, Severity: finding.Info, Fingerprint: "l"})
+	ci := CodeInsights{BaseURL: srv.URL, Repo: "ws/repo", Commit: "abc", HTTP: srv.Client()}
+	if err := ci.Publish(context.Background(), r, policy.Decision{Result: "fail", Total: 2501}); err != nil {
+		t.Fatal(err)
+	}
+	details := reportDetails(t, *got)
+	if !strings.HasSuffix(details, "…and 1500 more findings in .shipguard/findings.json") || len(details) > maxDetails {
+		t.Errorf("details = %q", details)
+	}
+
+	srv2, got2 := recorder(t, 200)
+	ci.BaseURL, ci.HTTP = srv2.URL, srv2.Client()
+	if err := ci.Publish(context.Background(), manyFindings(5), policy.Decision{Result: "pass", Total: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if d := reportDetails(t, *got2); strings.Contains(d, "more findings") {
+		t.Errorf("details under the cap = %q", d)
+	}
+}
+
 func TestCodeInsightsFailedResult(t *testing.T) {
 	srv, got := recorder(t, 200)
 	ci := CodeInsights{BaseURL: srv.URL, Repo: "ws/repo", Commit: "abc", HTTP: srv.Client()}

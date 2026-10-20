@@ -93,10 +93,15 @@ func (c CodeInsights) Publish(ctx context.Context, r finding.Result, d policy.De
 	if d.ExitCode() != 0 {
 		result = "FAILED"
 	}
-	anns, _ := annotations(r, d)
+	anns, more := annotations(r, d)
+	details := firstLine(Summary(r, d, 0))
+	if more > 0 {
+		note := fmt.Sprintf(" …and %d more findings in .shipguard/findings.json", more)
+		details = cutRunes(details, maxDetails-len(note)) + note
+	}
 	body := ciReport{
 		Title:      reportKey,
-		Details:    cutRunes(firstLine(Summary(r, d, 0)), maxDetails),
+		Details:    cutRunes(details, maxDetails),
 		ReportType: "SECURITY",
 		Reporter:   reportKey,
 		Result:     result,
