@@ -47,7 +47,7 @@ func Report(ctx context.Context, dir, format string, r finding.Result, d policy.
 	case "none":
 		return nil
 	case "sarif":
-		return writeSARIFFile(dir, r)
+		return writeSARIFFile(dir, r, d)
 	case "gitlab":
 		return WriteGitLab(filepath.Join(dir, outDir), r, r.ShipguardVersion, time.Now())
 	case "bitbucket":
@@ -75,7 +75,7 @@ func codeInsightsFromEnv(pc platform.Context, getenv func(string) string) CodeIn
 	}
 }
 
-func writeSARIFFile(dir string, r finding.Result) error {
+func writeSARIFFile(dir string, r finding.Result, d policy.Decision) error {
 	path := filepath.Join(dir, SARIFFile)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
@@ -84,7 +84,7 @@ func writeSARIFFile(dir string, r finding.Result) error {
 	if err != nil {
 		return fmt.Errorf("create sarif: %w", err)
 	}
-	if err := WriteSARIF(f, r, r.ShipguardVersion); err != nil {
+	if err := WriteSARIF(f, r, d, r.ShipguardVersion); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("write sarif: %w", err)
 	}

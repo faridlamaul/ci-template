@@ -10,6 +10,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
+	"github.com/faridlamaul/shipguard/internal/policy"
 )
 
 // testdata/sarif-schema-2.1.0.json is the official OASIS SARIF 2.1.0 schema,
@@ -33,7 +34,7 @@ func sampleFindings() finding.Result {
 func renderSARIF(t *testing.T, r finding.Result) (string, map[string]any) {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := WriteSARIF(&buf, r, "v1.2.3"); err != nil {
+	if err := WriteSARIF(&buf, r, policy.Decision{}, "v1.2.3"); err != nil {
 		t.Fatal(err)
 	}
 	var doc map[string]any
@@ -43,7 +44,8 @@ func renderSARIF(t *testing.T, r finding.Result) (string, map[string]any) {
 	return buf.String(), doc
 }
 
-func TestSARIFValidatesAgainstSchema(t *testing.T) {
+func compileSARIFSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
 	raw, err := os.ReadFile("testdata/sarif-schema-2.1.0.json")
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +62,11 @@ func TestSARIFValidatesAgainstSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return sch
+}
+
+func TestSARIFValidatesAgainstSchema(t *testing.T) {
+	sch := compileSARIFSchema(t)
 	for name, r := range map[string]finding.Result{"findings": sampleFindings(), "empty": {}} {
 		_, doc := renderSARIF(t, r)
 		if err := sch.Validate(doc); err != nil {
@@ -160,6 +167,46 @@ func TestSARIFSkipsInfoLicenses(t *testing.T) {
 	for _, want := range []string{"license:AGPL-3.0-only", "info.rule"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("SARIF missing %s", want)
+		}
+	}
+}
+
+// TestSARIFSuppressions: findings suppressed by an exception carry an accepted
+// external suppression with the exception reason; every other finding
+// (including existing or below-threshold ones) carries none.
+func TestSARIFSuppressions(t *testing.T) {
+	r := sampleFindings()
+	d := policy.Decision{
+		Suppressed:        []finding.Finding{r.Findings[0], r.Findings[3]},
+		SuppressedReasons: map[string]string{"fp1": "accepted risk", "fp4": "not reachable"},
+	}
+	var buf bytes.Buffer
+	if err := WriteSARIF(&buf, r, d, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := compileSARIFSchema(t).Validate(doc); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"fp1": "accepted risk", "fp4": "not reachable"}
+	for _, x := range doc["runs"].([]any)[0].(map[string]any)["results"].([]any) {
+		m := x.(map[string]any)
+		fp := m["partialFingerprints"].(map[string]any)["shipguard/v1"].(string)
+		sup, has := m["suppressions"]
+		reason, suppressed := want[fp]
+		if has != suppressed {
+			t.Fatalf("%s: suppressions present=%v want %v", fp, has, suppressed)
+		}
+		if !suppressed {
+			continue
+		}
+		list := sup.([]any)
+		s := list[0].(map[string]any)
+		if len(list) != 1 || s["kind"] != "external" || s["status"] != "accepted" || s["justification"] != reason {
+			t.Fatalf("%s: suppressions %v", fp, list)
 		}
 	}
 }

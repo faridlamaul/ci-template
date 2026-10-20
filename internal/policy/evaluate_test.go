@@ -223,3 +223,21 @@ func TestZeroDecisionEnforces(t *testing.T) {
 		t.Fatalf("exit = %d, want 1", d.ExitCode())
 	}
 }
+
+func TestEvaluateRecordsSuppressionReason(t *testing.T) {
+	f := fnd("a", finding.CategorySAST, finding.High, false)
+	g := fnd("b", finding.CategorySAST, finding.High, false)
+	exp := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	d := Evaluate(res(f, g), cfgWithException(Exception{ID: "a", Reason: "accepted risk", Expires: exp}), false, evalNow)
+	if got := d.SuppressedReasons[f.Fingerprint]; got != "accepted risk" {
+		t.Fatalf("reason for suppressed finding = %q", got)
+	}
+	if _, ok := d.SuppressedReasons[g.Fingerprint]; ok {
+		t.Fatalf("unsuppressed finding must have no reason: %v", d.SuppressedReasons)
+	}
+	// An expired exception suppresses nothing.
+	d = Evaluate(res(f), cfgWithException(Exception{ID: "a", Reason: "r", Expires: evalNow.AddDate(0, 0, -5)}), false, evalNow)
+	if len(d.SuppressedReasons) != 0 {
+		t.Fatalf("expired exception recorded: %v", d.SuppressedReasons)
+	}
+}

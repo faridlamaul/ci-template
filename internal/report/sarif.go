@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
+	"github.com/faridlamaul/shipguard/internal/policy"
 )
 
 const (
@@ -47,13 +48,20 @@ type sarifText struct {
 }
 
 type sarifResult struct {
-	RuleID              string            `json:"ruleId"`
-	RuleIndex           int               `json:"ruleIndex"`
-	Level               string            `json:"level"`
-	Message             sarifText         `json:"message"`
-	Locations           []sarifLocation   `json:"locations,omitempty"`
-	PartialFingerprints map[string]string `json:"partialFingerprints"`
-	Properties          map[string]string `json:"properties"`
+	RuleID              string             `json:"ruleId"`
+	RuleIndex           int                `json:"ruleIndex"`
+	Level               string             `json:"level"`
+	Message             sarifText          `json:"message"`
+	Locations           []sarifLocation    `json:"locations,omitempty"`
+	PartialFingerprints map[string]string  `json:"partialFingerprints"`
+	Properties          map[string]string  `json:"properties"`
+	Suppressions        []sarifSuppression `json:"suppressions,omitempty"`
+}
+
+type sarifSuppression struct {
+	Kind          string `json:"kind"`
+	Status        string `json:"status"`
+	Justification string `json:"justification"`
 }
 
 type sarifLocation struct {
@@ -77,8 +85,15 @@ type sarifRegion struct {
 // WriteSARIF renders the findings as a SARIF 2.1.0 log. Rules are sorted by
 // id and deduplicated; results keep the input order. Findings without a File
 // are included without a location (GitHub code scanning may ignore them).
-// Info license findings (allowed licenses) are left out.
-func WriteSARIF(w io.Writer, r finding.Result, version string) error {
+// Info license findings (allowed licenses) are left out. Findings that an
+// active exception suppressed (d.Suppressed) carry an accepted external
+// suppression with the exception reason, so GitHub imports them as dismissed
+// alerts; findings that are merely below threshold or existing stay open.
+func WriteSARIF(w io.Writer, r finding.Result, d policy.Decision, version string) error {
+	suppressed := make(map[string]bool, len(d.Suppressed))
+	for _, f := range d.Suppressed {
+		suppressed[f.Fingerprint] = true
+	}
 	var fs []finding.Finding
 	for _, f := range r.Findings {
 		if reported(f) {
@@ -123,6 +138,9 @@ func WriteSARIF(w io.Writer, r finding.Result, version string) error {
 			Message:             sarifText{Text: orID(f.Message, f.ID)},
 			PartialFingerprints: map[string]string{sarifFingerprint: f.Fingerprint},
 			Properties:          map[string]string{"status": string(f.Status)},
+		}
+		if suppressed[f.Fingerprint] {
+			res.Suppressions = []sarifSuppression{{Kind: "external", Status: "accepted", Justification: d.SuppressedReasons[f.Fingerprint]}}
 		}
 		if f.File != "" {
 			res.Locations = []sarifLocation{{PhysicalLocation: sarifPhysical{

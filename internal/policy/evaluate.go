@@ -11,13 +11,16 @@ import (
 
 // Decision is the outcome of evaluating a Result against a Config.
 type Decision struct {
-	Result        string            // "pass" | "fail" | "audit"
-	Blocking      []finding.Finding // above threshold, not suppressed, and (not PR or not "existing")
-	Suppressed    []finding.Finding
-	Expired       []Exception // matched a finding but past expiry
-	New, Total    int
-	ScannerErrors []finding.ScannerRun
-	audit         bool
+	Result     string            // "pass" | "fail" | "audit"
+	Blocking   []finding.Finding // above threshold, not suppressed, and (not PR or not "existing")
+	Suppressed []finding.Finding
+	// SuppressedReasons maps the fingerprint of each suppressed finding to the
+	// reason of the (first) active exception that matched it.
+	SuppressedReasons map[string]string
+	Expired           []Exception // matched a finding but past expiry
+	New, Total        int
+	ScannerErrors     []finding.ScannerRun
+	audit             bool
 }
 
 // Evaluate applies thresholds and exceptions to r. On a PR only new findings
@@ -37,12 +40,15 @@ func Evaluate(r finding.Result, cfg Config, pr bool, now time.Time) Decision {
 		if isNew {
 			d.New++
 		}
-		active := false
+		active, reason := false, ""
 		for i, e := range cfg.Exceptions {
 			if !matches(e, f) {
 				continue
 			}
 			if now.Before(e.Expires.Add(24 * time.Hour)) {
+				if !active {
+					reason = e.Reason
+				}
 				active = true
 			} else {
 				expired[i] = true
@@ -50,6 +56,10 @@ func Evaluate(r finding.Result, cfg Config, pr bool, now time.Time) Decision {
 		}
 		if active {
 			d.Suppressed = append(d.Suppressed, f)
+			if d.SuppressedReasons == nil {
+				d.SuppressedReasons = map[string]string{}
+			}
+			d.SuppressedReasons[f.Fingerprint] = reason
 			continue
 		}
 		if pr && !isNew {
