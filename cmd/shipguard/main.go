@@ -143,6 +143,17 @@ func resolveFlags(fs *pflag.FlagSet, g *globals, getenv func(string) string) err
 		}
 		g.dir = wd
 	}
+	// Scanners and git run with other working directories, and reported
+	// paths are made relative to the root: use one absolute, symlink-free
+	// path. A missing directory is reported by the command that uses it.
+	abs, err := filepath.Abs(g.dir)
+	if err != nil {
+		return &exitcode.Err{Code: exitcode.Error, Err: fmt.Errorf("resolve --dir: %w", err)}
+	}
+	if real, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+		abs = real
+	}
+	g.dir = abs
 	return nil
 }
 

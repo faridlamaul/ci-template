@@ -144,6 +144,9 @@ func TestScanScannerErrorExitsZero(t *testing.T) {
 	if code := run([]string{"scan", "--dir", dir}, envOf(nil), &out, &errb); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errb.String())
 	}
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real // --dir is resolved (macOS: /var -> /private/var)
+	}
 	if rules != defaultRulesDir || len(dirs) != 1 || dirs[0] != dir {
 		t.Errorf("rules = %q, dirs = %q", rules, dirs)
 	}
@@ -459,5 +462,34 @@ func TestReportUploadFailureExitsZero(t *testing.T) {
 	}
 	if !strings.HasPrefix(errb.String(), "warning: ") || strings.Contains(errb.String(), "tok-123") {
 		t.Errorf("stderr = %q", errb.String())
+	}
+}
+
+// TestDirIsAbsoluteAndResolved: a relative or symlinked --dir is made
+// absolute and symlink-free before any scanner sees it.
+func TestDirIsAbsoluteAndResolved(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "repo")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(base)
+	for _, d := range []string{"repo", "./link", filepath.Join(base, "link")} {
+		var out, errb bytes.Buffer
+		root, g := newRoot(envOf(nil), &out, &errb)
+		root.SetArgs([]string{"version", "--dir", d})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if g.dir != want {
+			t.Errorf("--dir %s: dir = %q, want %q", d, g.dir, want)
+		}
 	}
 }
