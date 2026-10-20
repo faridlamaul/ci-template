@@ -1,0 +1,20 @@
+name: Dogfood
+
+# shipguard scans itself with the policy in .shipguard.yaml. It is separate from
+# ci.yml because release.yml calls that workflow with contents: read only, and a
+# called job cannot ask for more than its caller grants.
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  scan:
+    name: Dogfood
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: ./.github/workflows/scan.yml
+    with:
+      mode: enforce
