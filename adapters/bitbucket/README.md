@@ -1,6 +1,6 @@
 # Bitbucket adapter
 
-The shipguard image is the pipe. Its default command, `shipguard run`, scans, gates and posts a Code Insights report. There is no adapter code: `pipe.yml` is metadata only, and the release renders its `__SHIPGUARD_VERSION__`.
+The shipguard image is the pipe. Its default command, `shipguard run`, scans, gates and posts a Code Insights report. There is no adapter code: `pipe.yml` is listing metadata; consumers use `pipe: docker://ghcr.io/faridlamaul/shipguard:vX.Y.Z`.
 
 ```yaml
 - pipe: docker://ghcr.io/faridlamaul/shipguard:vX.Y.Z

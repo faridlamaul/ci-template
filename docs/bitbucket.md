@@ -71,13 +71,13 @@ The policy is read from the destination branch, and the summary warns when the P
 ## Hardening
 
 - Pin the pipe to an exact tag, or better to a digest: `docker://ghcr.io/faridlamaul/shipguard:vX.Y.Z@sha256:<digest>`.
-- Verify the image signature. **Planned for the first release (not yet implemented):** no signing or attestation step exists yet, so this command is an illustrative future example. The exact certificate identity will be documented when the release workflow lands.
-
+- Verify the image signature and its build provenance. The image is signed keylessly by the `release.yml` run on `main` of the GitHub repository:
 
   ```bash
   cosign verify ghcr.io/faridlamaul/shipguard:vX.Y.Z \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    --certificate-identity-regexp '^https://github\.com/faridlamaul/shipguard/\.github/workflows/.+@refs/tags/v.+$'
+    --certificate-identity https://github.com/faridlamaul/shipguard/.github/workflows/release.yml@refs/heads/main
+  gh attestation verify oci://ghcr.io/faridlamaul/shipguard:vX.Y.Z --repo faridlamaul/shipguard
   ```
 
 ## Air-gapped runs

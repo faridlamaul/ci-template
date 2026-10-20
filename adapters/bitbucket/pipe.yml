@@ -1,5 +1,5 @@
-# Bitbucket pipe metadata. The release renders __SHIPGUARD_VERSION__.
-# Consumers usually reference the image directly:
+# Bitbucket pipe listing metadata (__SHIPGUARD_VERSION__ stands for the
+# release version). Consumers reference the image directly:
 #   pipe: docker://ghcr.io/faridlamaul/shipguard:<version>
 name: shipguard
 image: ghcr.io/faridlamaul/shipguard:__SHIPGUARD_VERSION__

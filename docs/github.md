@@ -103,15 +103,14 @@ with:
   image: ghcr.io/faridlamaul/shipguard:vX.Y.Z@sha256:<digest>
 ```
 
-**Verify the image signature.** Planned for the first release (not yet implemented): no signing, provenance or SBOM step exists yet. The command below is an illustrative future example, and the exact certificate identity will be documented when the release workflow lands.
+**Verify the image.** The release workflow signs each image with cosign keyless signing (GitHub OIDC) and attaches SLSA build provenance and an SBOM. The image is built by the `release.yml` run on `main`, so that is the certificate identity:
 
 ```bash
 cosign verify ghcr.io/faridlamaul/shipguard:vX.Y.Z \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/faridlamaul/shipguard/\.github/workflows/.+@refs/tags/v.+$'
+  --certificate-identity https://github.com/faridlamaul/shipguard/.github/workflows/release.yml@refs/heads/main
+gh attestation verify oci://ghcr.io/faridlamaul/shipguard:vX.Y.Z --repo faridlamaul/shipguard
 ```
-
-The plan is to attach build provenance and an SBOM to the image as attestations as well.
 
 **What the container sees.** The scan runs in the image with only the workspace mounted. `GITHUB_TOKEN`, the runner command files and other secrets are not passed in; the adapter forwards an explicit allowlist of variables.
 

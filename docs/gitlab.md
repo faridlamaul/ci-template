@@ -62,15 +62,15 @@ On a merge request the policy is read from the base, and the summary warns when 
 
 ## Hardening
 
-- Pin the component to an exact version (`scan@X.Y.Z`), never a floating one. For `include: remote`, keep the `integrity` hash.
+- Pin the component to an exact version (`scan@X.Y.Z`), never a floating one. For `include: remote`, keep the `integrity` hash. Each release lists the hash of every template in `INTEGRITY.md` of the [gitlab.com project](https://gitlab.com/faridlamaul/shipguard) at that tag, and in the release notes of that version.
 - Pin the image by digest with the `image` input: `ghcr.io/faridlamaul/shipguard:vX.Y.Z@sha256:<digest>`.
-- Verify the image signature. **Planned for the first release (not yet implemented):** no signing or attestation step exists yet, so this command is an illustrative future example. The exact certificate identity will be documented when the release workflow lands.
-
+- Verify the image signature and its build provenance. The image is signed keylessly by the `release.yml` run on `main` of the GitHub repository:
 
   ```bash
   cosign verify ghcr.io/faridlamaul/shipguard:vX.Y.Z \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    --certificate-identity-regexp '^https://github\.com/faridlamaul/shipguard/\.github/workflows/.+@refs/tags/v.+$'
+    --certificate-identity https://github.com/faridlamaul/shipguard/.github/workflows/release.yml@refs/heads/main
+  gh attestation verify oci://ghcr.io/faridlamaul/shipguard:vX.Y.Z --repo faridlamaul/shipguard
   ```
 
 ## Tier notes
