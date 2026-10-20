@@ -493,3 +493,49 @@ func TestDirIsAbsoluteAndResolved(t *testing.T) {
 		}
 	}
 }
+
+// TestRunResetsOutputsBeforeValidation: every output a previous run left is
+// removed first, and run neither gates nor reports when scan failed before
+// writing findings, so nothing stale is presented as this run's result.
+func TestRunResetsOutputsBeforeValidation(t *testing.T) {
+	old := buildScanners
+	buildScanners = func(string) []scanner.Scanner { return []scanner.Scanner{blocker{}} }
+	t.Cleanup(func() { buildScanners = old })
+	outputs := []string{"findings.json", "policy.yaml", "raw/x.json", "summary.md", "gate.env", "shipguard.sarif",
+		"gl-sast-report.json", "gl-secret-detection-report.json"}
+	for _, args := range [][]string{{"run", "--scanners", "bogus"}, {"scan", "--mode", "warn"}, {"run", "--config", "missing.yaml"}} {
+		dir := t.TempDir()
+		writeGateFixture(t, dir, "push", okRunFixture, nil, "mode: enforce\n")
+		for _, p := range outputs[2:] {
+			path := filepath.Join(dir, ".shipguard", p)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		keep := filepath.Join(dir, ".shipguard", "rules", "r.yaml")
+		if err := os.MkdirAll(filepath.Dir(keep), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(keep, []byte("rules: []\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var out, errb bytes.Buffer
+		if code := run(append(args, "--dir", dir), envOf(nil), &out, &errb); code != 2 {
+			t.Fatalf("%v: exit = %d, want 2; stderr = %s", args, code, errb.String())
+		}
+		for _, p := range outputs {
+			if _, err := os.Stat(filepath.Join(dir, ".shipguard", p)); !os.IsNotExist(err) {
+				t.Errorf("%v: stale %s survived: %v", args, p, err)
+			}
+		}
+		if _, err := os.Stat(keep); err != nil {
+			t.Errorf("%v: consumer file in .shipguard/ removed: %v", args, err)
+		}
+		if strings.Contains(out.String(), "shipguard: PASS") {
+			t.Errorf("%v: gated stale results: %s", args, out.String())
+		}
+	}
+}

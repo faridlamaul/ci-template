@@ -172,6 +172,11 @@ func scanCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *
 }
 
 func doScan(ctx context.Context, g *globals, getenv func(string) string, stdout, stderr io.Writer) error {
+	// Before any validation: a failed scan must not leave a previous run's
+	// results for gate or report to pick up.
+	if err := scan.ResetOutputs(g.dir); err != nil {
+		return &exitcode.Err{Code: exitcode.Error, Err: err}
+	}
 	cats, err := scan.ParseCategories(g.scanners)
 	if err != nil {
 		return &exitcode.Err{Code: exitcode.Error, Err: err}
@@ -369,8 +374,8 @@ func doReport(ctx context.Context, g *globals, getenv func(string) string, stder
 }
 
 // runCmd scans, gates and reports in one process. It returns the gate exit
-// code, or 2 when scan failed, and always attempts the report when findings
-// exist.
+// code, or 2 when scan failed. A failed scan wrote no findings, so gate and
+// report are skipped; otherwise the report is always attempted.
 func runCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -394,9 +399,8 @@ func runCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *c
 				scanFailed = true
 				code = exitcode.Error
 			}
-			_, statErr := os.Stat(filepath.Join(g.dir, scan.OutDir, "findings.json"))
-			if scanFailed && statErr != nil {
-				fmt.Fprintln(stderr, "warning: no findings.json; skipping gate and report")
+			if scanFailed {
+				fmt.Fprintln(stderr, "warning: scan failed; skipping gate and report")
 			} else {
 				if err := doGate(g, getenv, stdout); err != nil {
 					note(err)

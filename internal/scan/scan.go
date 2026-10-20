@@ -446,6 +446,15 @@ func effectiveConfig(dir, configPath, baseSHA, mode string) (effective, error) {
 	return e, nil
 }
 
+// outputs are the files and directories shipguard writes into OutDir (glob
+// patterns); anything else there, such as consumer rules, is left alone.
+var outputs = []string{"findings.json", "policy.yaml", "raw", "summary.md", "gate.env", "*.sarif", "gl-*.json"}
+
+// ResetOutputs removes every output a previous run (or a commit) left in the
+// repository's OutDir; see resetOutput. Callers run it before validating
+// anything, so a failed run never leaves stale results behind.
+func ResetOutputs(dir string) error { return resetOutput(filepath.Join(dir, OutDir)) }
+
 // resetOutput removes results a previous run (or a commit) left in out, so
 // nothing stale or planted is read as this run's output, and recreates raw/.
 // A symlink or file at out is replaced by a real directory.
@@ -455,9 +464,15 @@ func resetOutput(out string) error {
 			return fmt.Errorf("reset output dir: %w", err)
 		}
 	}
-	for _, p := range []string{"findings.json", "policy.yaml", "raw"} {
-		if err := os.RemoveAll(filepath.Join(out, p)); err != nil {
+	for _, pat := range outputs {
+		matches, err := filepath.Glob(filepath.Join(out, pat))
+		if err != nil {
 			return fmt.Errorf("reset output dir: %w", err)
+		}
+		for _, p := range matches {
+			if err := os.RemoveAll(p); err != nil {
+				return fmt.Errorf("reset output dir: %w", err)
+			}
 		}
 	}
 	if err := os.MkdirAll(filepath.Join(out, "raw"), 0o755); err != nil {
