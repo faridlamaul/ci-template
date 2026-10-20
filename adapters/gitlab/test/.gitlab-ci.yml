@@ -1,0 +1,20 @@
+# Smoke test for the publish project pipeline. Includes the rendered template
+# (templates/scan.yml in the publish project) and asserts the gate result.
+stages: [test, verify]
+
+include:
+  - local: templates/scan.yml
+    inputs:
+      mode: audit
+
+smoke-assert:
+  stage: verify
+  image:
+    name: alpine:3.20
+    entrypoint: [""]
+  needs:
+    - job: shipguard
+      artifacts: true
+  script:
+    - 'echo "SHIPGUARD_RESULT=${SHIPGUARD_RESULT}"'
+    - '[ "${SHIPGUARD_RESULT}" = "audit" ]'

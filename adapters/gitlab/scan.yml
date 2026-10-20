@@ -1,0 +1,72 @@
+spec:
+  inputs:
+    scanners:
+      type: string
+      default: all
+      description: "all, or a comma list of secrets, sast, sca, iac."
+    mode:
+      type: string
+      default: ""
+      description: "enforce or audit. Empty uses the mode from the config file."
+    config:
+      type: string
+      default: .shipguard.yaml
+      description: "Path to the shipguard config file."
+    image:
+      type: string
+      default: ghcr.io/faridlamaul/shipguard:__SHIPGUARD_VERSION__
+      description: "shipguard image. Pin by digest for hardening."
+    stage:
+      type: string
+      default: test
+      description: "Pipeline stage that runs the scan."
+---
+# shipguard GitLab job. The version placeholder above is rendered at release
+# time by scripts/render-gitlab.sh.
+#
+# Security note: with `image:`, the scanner container receives every CI/CD
+# variable of the job, including CI_JOB_TOKEN. Keep secrets in protected
+# variables and do not expose them to merge request pipelines from forks.
+#
+# Inputs are only passed through `variables:` (never into `script:`), and an
+# empty value counts as unset in shipguard, so an empty `mode` keeps the mode
+# from the config file.
+shipguard:
+  stage: $[[ inputs.stage ]]
+  image:
+    name: $[[ inputs.image ]]
+    entrypoint: [""]
+  variables:
+    # Merge request and scheduled scans need the full history.
+    GIT_DEPTH: "0"
+    SHIPGUARD_SCANNERS:
+      value: "$[[ inputs.scanners ]]"
+      expand: false
+    SHIPGUARD_MODE:
+      value: "$[[ inputs.mode ]]"
+      expand: false
+    SHIPGUARD_CONFIG:
+      value: "$[[ inputs.config ]]"
+      expand: false
+  script:
+    - shipguard run
+  cache:
+    key: shipguard-db
+    when: always
+    paths:
+      - .shipguard-cache/
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - .shipguard/
+    reports:
+      sast: .shipguard/gl-sast-report.json
+      dependency_scanning: .shipguard/gl-dependency-scanning-report.json
+      secret_detection: .shipguard/gl-secret-detection-report.json
+      dotenv: .shipguard/gate.env
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "schedule"

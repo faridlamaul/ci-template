@@ -3,7 +3,7 @@ INSTALL_DIR=$(HOME)/.local/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
-.PHONY: all build install test vet fmt-check clean image-test e2e docs-check
+.PHONY: all build install test vet fmt-check clean image-test e2e docs-check gitlab-lint
 
 all: build
 
@@ -38,3 +38,11 @@ e2e: image-test
 # Validates every `.shipguard.yaml` snippet in README.md and docs/*.md with the real CLI.
 docs-check:
 	./scripts/docs-check.sh
+
+# Renders the GitLab template and lints it (and a consumer-style pipeline that
+# includes it) on gitlab.com against the private test project.
+GITLAB_LINT_PROJECT_ID ?= 87873115
+gitlab-lint:
+	rm -rf dist/gitlab
+	./scripts/render-gitlab.sh 0.0.0 dist/gitlab
+	./scripts/gitlab-lint.sh $(GITLAB_LINT_PROJECT_ID) dist/gitlab
