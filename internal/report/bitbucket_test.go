@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
+	"github.com/faridlamaul/shipguard/internal/platform"
 	"github.com/faridlamaul/shipguard/internal/policy"
 )
 
@@ -278,5 +279,26 @@ func TestReportFormats(t *testing.T) {
 	}
 	if err := Report(context.Background(), dir, "bogus", r, policy.Decision{}, none); err == nil {
 		t.Error("unknown format accepted")
+	}
+}
+
+func TestCodeInsightsProxyDefault(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"step", map[string]string{}, "http://localhost:29418"},
+		{"pipe", map[string]string{"BITBUCKET_PIPE_STORAGE_DIR": "/opt/atlassian/pipelines/agent/build/.bitbucket/pipelines/generated/pipeline/pipes/x"}, "http://host.docker.internal:29418"},
+		{"override wins in pipe", map[string]string{"BITBUCKET_PIPE_STORAGE_DIR": "/x", "SHIPGUARD_BITBUCKET_PROXY": "http://p:1"}, "http://p:1"},
+		{"none", map[string]string{"BITBUCKET_PIPE_STORAGE_DIR": "/x", "SHIPGUARD_BITBUCKET_PROXY": "none"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ci := codeInsightsFromEnv(platform.Context{}, func(k string) string { return tc.env[k] })
+			if ci.Proxy != tc.want {
+				t.Errorf("Proxy = %q, want %q", ci.Proxy, tc.want)
+			}
+		})
 	}
 }

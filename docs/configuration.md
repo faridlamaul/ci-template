@@ -216,7 +216,7 @@ On Bitbucket (when `BITBUCKET_BUILD_NUMBER` is set) the pipe also accepts the ba
 | `SHIPGUARD_RULES_DIR` | Directory of the built-in SAST rules. Default `/opt/shipguard/rules` in the image. |
 | `SHIPGUARD_TRIVY_CHECKS_BUNDLE_REPOSITORY` | Mirror of the trivy checks bundle, for air-gapped runs. |
 | `SHIPGUARD_OSV_OFFLINE_DB` | Path to a local OSV database; osv-scanner then runs offline. |
-| `SHIPGUARD_BITBUCKET_PROXY` | Proxy used to post Code Insights. Default `http://localhost:29418` (the Pipelines proxy). Set `none` to use no proxy. |
+| `SHIPGUARD_BITBUCKET_PROXY` | Proxy used to post Code Insights. Default: the Pipelines proxy, `http://host.docker.internal:29418` in a pipe and `http://localhost:29418` in a step image. Set `none` to use no proxy. |
 | `SHIPGUARD_BITBUCKET_TOKEN` | Optional Bearer token for Code Insights. When set, the proxy is not used. |
 
 On the GitHub reusable workflow these variables cannot be set: a caller has no way to pass environment variables into the called workflow. Use the composite action instead (see [docs/github.md](github.md#advanced-environment-variables)).

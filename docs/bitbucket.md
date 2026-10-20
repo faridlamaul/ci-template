@@ -55,7 +55,7 @@ pipelines:
 
 ## Code Insights
 
-Results are posted as a Code Insights report on the commit. By default shipguard posts through the Pipelines proxy at `http://localhost:29418`, which needs no token. Related variables:
+Results are posted as a Code Insights report on the commit. By default shipguard posts through the Pipelines proxy, which needs no token. As a pipe it reaches the proxy at `http://host.docker.internal:29418`; when the image runs as a step image, at `http://localhost:29418`. Related variables:
 
 | Variable | Description |
 |---|---|

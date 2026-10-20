@@ -26,13 +26,16 @@ const (
 	defaultBitbucketAPI   = "http://api.bitbucket.org/2.0"
 	secureBitbucketAPI    = "https://api.bitbucket.org/2.0"
 	defaultBitbucketProxy = "http://localhost:29418"
-	reportKey             = "shipguard"
-	maxAnnotations        = 1000
-	annotationBatch       = 100
-	maxDetails            = 2000
-	maxAnnotationSummary  = 450
-	maxExternalID         = 64
-	maxErrBody            = 200
+	// Pipes run in their own container, so they reach the Pipelines proxy
+	// on the build host instead of localhost.
+	pipeBitbucketProxy   = "http://host.docker.internal:29418"
+	reportKey            = "shipguard"
+	maxAnnotations       = 1000
+	annotationBatch      = 100
+	maxDetails           = 2000
+	maxAnnotationSummary = 450
+	maxExternalID        = 64
+	maxErrBody           = 200
 )
 
 // CodeInsights publishes a report and annotations to Bitbucket Cloud.

@@ -29,7 +29,8 @@ func reported(f finding.Finding) bool {
 // ErrUpload.
 //
 // SHIPGUARD_BITBUCKET_PROXY overrides the proxy (unset or empty: the default
-// Pipelines proxy; "none" disables it). SHIPGUARD_BITBUCKET_TOKEN is an
+// Pipelines proxy, reached through host.docker.internal when running as a
+// pipe; "none" disables it). SHIPGUARD_BITBUCKET_TOKEN is an
 // optional Bearer token; with a token the proxy is not used.
 func Report(ctx context.Context, dir, format string, r finding.Result, d policy.Decision, getenv func(string) string) error {
 	pc := platform.Detect(getenv)
@@ -66,6 +67,9 @@ func codeInsightsFromEnv(pc platform.Context, getenv func(string) string) CodeIn
 	switch proxy {
 	case "":
 		proxy = defaultBitbucketProxy
+		if getenv("BITBUCKET_PIPE_STORAGE_DIR") != "" {
+			proxy = pipeBitbucketProxy
+		}
 	case "none":
 		proxy = ""
 	}
