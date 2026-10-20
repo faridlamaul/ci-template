@@ -17,5 +17,9 @@ function good() {
   const passwordPrompt = "Enter your password now";
   // ok: shipguard.javascript.hardcoded-credentials
   const secretName = "db-credentials";
-  return [dbPassword, tokenHeader, tokenUrl, passwordPrompt, secretName];
+  // ok: shipguard.javascript.hardcoded-credentials
+  const categorySecrets = "secrets";
+  // ok: shipguard.javascript.hardcoded-credentials
+  const secretKind = "token_type";
+  return [dbPassword, tokenHeader, tokenUrl, passwordPrompt, secretName, categorySecrets, secretKind];
 }

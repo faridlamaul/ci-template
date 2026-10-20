@@ -10,6 +10,13 @@ func bad() {
 	_, _ = dbPassword, apiToken
 }
 
+type category string
+
+const (
+	// ok: shipguard.go.hardcoded-credentials
+	categorySecrets category = "secrets"
+)
+
 func good() {
 	// ok: shipguard.go.hardcoded-credentials
 	dbPassword := os.Getenv("DB_PASSWORD")
@@ -21,5 +28,7 @@ func good() {
 	passwordPrompt := "Enter your password now"
 	// ok: shipguard.go.hardcoded-credentials
 	secretName := "db-credentials"
-	_, _, _, _, _ = dbPassword, passwordLabel, tokenURL, passwordPrompt, secretName
+	// ok: shipguard.go.hardcoded-credentials
+	secretKind := "token_type"
+	_, _, _, _, _, _ = dbPassword, passwordLabel, tokenURL, passwordPrompt, secretName, secretKind
 }

@@ -18,5 +18,11 @@ fn good() {
     let password_prompt = "Enter your password now";
     // ok: shipguard.rust.hardcoded-credentials
     let secret_name = "db-credentials";
-    let _ = (db_password, token_header, token_url, password_prompt, secret_name);
+    // ok: shipguard.rust.hardcoded-credentials
+    let category_secrets = "secrets";
+    // ok: shipguard.rust.hardcoded-credentials
+    const CATEGORY_SECRETS: &str = "secrets";
+    // ok: shipguard.rust.hardcoded-credentials
+    let secret_kind = "token_type";
+    let _ = (db_password, token_header, token_url, password_prompt, secret_name, category_secrets, secret_kind, CATEGORY_SECRETS);
 }

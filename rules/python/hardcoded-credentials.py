@@ -24,4 +24,8 @@ def good():
     password_prompt = "Enter your password now"
     # ok: shipguard.python.hardcoded-credentials
     secret_name = "db-credentials"
-    return db_password, token_header, token_url, password_prompt, secret_name
+    # ok: shipguard.python.hardcoded-credentials
+    category_secrets = "secrets"
+    # ok: shipguard.python.hardcoded-credentials
+    secret_kind = "token_type"
+    return db_password, token_header, token_url, password_prompt, secret_name, category_secrets, secret_kind

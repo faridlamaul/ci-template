@@ -17,5 +17,9 @@ def good
   password_prompt = "Enter your password now"
   # ok: shipguard.ruby.hardcoded-credentials
   secret_name = "db-credentials"
-  [db_password, token_header, token_url, password_prompt, secret_name]
+  # ok: shipguard.ruby.hardcoded-credentials
+  category_secrets = "secrets"
+  # ok: shipguard.ruby.hardcoded-credentials
+  secret_kind = "token_type"
+  [db_password, token_header, token_url, password_prompt, secret_name, category_secrets, secret_kind]
 end
