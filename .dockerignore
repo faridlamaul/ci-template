@@ -1,0 +1,15 @@
+.git
+.github
+.superpowers
+.shipguard*
+bin/
+docs/
+.gitignore
+# Vulnerable test targets and their module: only the rule YAML ships.
+rules/go.mod
+rules/**/*.go
+rules/**/*.js
+rules/**/*.ts
+rules/**/*.py
+rules/**/*.rb
+rules/**/*.rs

@@ -3,7 +3,7 @@ INSTALL_DIR=$(HOME)/.local/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
-.PHONY: all build install test vet fmt-check clean
+.PHONY: all build install test vet fmt-check clean image-test
 
 all: build
 
@@ -26,3 +26,8 @@ fmt-check:
 
 clean:
 	rm -rf bin/
+
+image-test:
+	docker build --build-arg VERSION=dev -t shipguard:dev .
+	docker run --rm shipguard:dev version
+	docker run --rm --entrypoint sh shipguard:dev -c 'gitleaks version && opengrep --version && osv-scanner --version && trivy --version'

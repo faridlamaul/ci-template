@@ -1,0 +1,71 @@
+name: Bump scanners
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    # Never runs on forks: they have no write token and no business bumping.
+    if: github.repository == 'faridlamaul/shipguard'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Bump pinned scanners
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/bump-scanners.sh
+
+      - name: Detect changes
+        id: diff
+        run: |
+          if git diff --quiet -- versions.env; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # PRs opened with GITHUB_TOKEN do not trigger other workflows (so CI will
+      # not run on the bump PR), which is why the tests run here first.
+      - name: Unit tests
+        if: steps.diff.outputs.changed == 'true'
+        run: make test
+
+      - name: Image end-to-end test
+        if: steps.diff.outputs.changed == 'true'
+        run: make image-test
+
+      - name: Open pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          branch="chore/bump-scanners-${RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add versions.env
+          git commit -m "chore(deps): bump pinned scanners"
+          # Checkout used persist-credentials: false, so authenticate the push
+          # explicitly with the job token.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "$branch"
+          gh pr create \
+            --repo "$REPOSITORY" \
+            --head "$branch" \
+            --base main \
+            --title "chore(deps): bump pinned scanners" \
+            --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env. Checksums were recomputed from the upstream release files and verified against the downloaded assets. Unit tests and the image end-to-end test passed in the bump workflow."
