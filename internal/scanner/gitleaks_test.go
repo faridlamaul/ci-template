@@ -26,9 +26,13 @@ func golden(t *testing.T, name string) []byte {
 	return b
 }
 
-// reportRunner writes golden to the --report-path argument.
+// reportRunner writes golden to the --report-path argument and answers
+// `git rev-parse --absolute-git-dir` with <dir>/.git.
 func reportRunner(t *testing.T, golden []byte, argsOut *[]string, reportOut *string) Runner {
 	return func(ctx context.Context, dir, name string, args ...string) ([]byte, []byte, int, error) {
+		if name == "git" {
+			return []byte(filepath.Join(dir, ".git") + "\n"), nil, 0, nil
+		}
 		if argsOut != nil {
 			*argsOut = args
 		}
@@ -128,26 +132,55 @@ func TestGitleaksArgs(t *testing.T) {
 	tests := []struct {
 		name string
 		tgt  Target
-		head []string
+		head []string // before the source path
+		git  bool     // source is the git dir, not the work tree
 	}{
-		{"pr range", Target{LogOpts: "base..head"}, []string{"git", "--log-opts=base..head"}},
-		{"full history", Target{FullHistory: true}, []string{"git"}},
-		{"dir", Target{}, []string{"dir", "."}},
-		{"log opts wins", Target{LogOpts: "a..b", FullHistory: true}, []string{"git", "--log-opts=a..b"}},
+		{"pr range", Target{LogOpts: "base..head"}, []string{"git", "--log-opts=base..head"}, true},
+		{"full history", Target{FullHistory: true}, []string{"git"}, true},
+		{"dir", Target{}, []string{"dir"}, false},
+		{"log opts wins", Target{LogOpts: "a..b", FullHistory: true}, []string{"git", "--log-opts=a..b"}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var args []string
+			var resolved string
+			var resolveErr error
 			tc.tgt.Dir = t.TempDir()
-			s := NewGitleaks(reportRunner(t, golden(t, "empty.json"), &args, nil))
+			inner := reportRunner(t, golden(t, "empty.json"), &args, nil)
+			run := func(ctx context.Context, dir, name string, a ...string) ([]byte, []byte, int, error) {
+				if name == "gitleaks" && a[0] == "dir" {
+					resolved, resolveErr = filepath.EvalSymlinks(a[1])
+				}
+				return inner(ctx, dir, name, a...)
+			}
+			s := NewGitleaks(run)
 			if _, err := s.Scan(context.Background(), tc.tgt); err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(args[:len(tc.head)], tc.head) {
 				t.Fatalf("args = %v, want prefix %v", args, tc.head)
 			}
-			tail := args[len(tc.head):]
-			want := []string{"--report-format", "json", "--report-path", tail[3], "--exit-code", "0", "--no-banner"}
+			src := args[len(tc.head)]
+			if tc.git {
+				if src != filepath.Join(tc.tgt.Dir, ".git") {
+					t.Fatalf("source = %q, want the git dir", src)
+				}
+			} else {
+				// A random symlink to the work tree, so fingerprints in a
+				// committed .gitleaksignore can never match.
+				if !strings.HasSuffix(src, string(filepath.Separator)) || within(tc.tgt.Dir, src) {
+					t.Fatalf("source = %q, want a trailing-separator path outside Dir", src)
+				}
+				if resolveErr != nil || !sameDir(t, resolved, tc.tgt.Dir) {
+					t.Fatalf("source %q resolves to %q (%v), want %s", src, resolved, resolveErr, tc.tgt.Dir)
+				}
+				if _, err := os.Lstat(strings.TrimSuffix(src, string(filepath.Separator))); !os.IsNotExist(err) {
+					t.Fatalf("source link %s not removed: %v", src, err)
+				}
+			}
+			tail := args[len(tc.head)+1:]
+			want := []string{"--report-format", "json", "--report-path", tail[3], "--exit-code", "0", "--no-banner",
+				"--config", tail[8], "--gitleaks-ignore-path", tail[10], "--ignore-gitleaks-allow"}
 			if !reflect.DeepEqual(tail, want) {
 				t.Fatalf("tail = %v", tail)
 			}
@@ -157,6 +190,101 @@ func TestGitleaksArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func sameDir(t *testing.T, a, b string) bool {
+	t.Helper()
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	return err1 == nil && err2 == nil && ra == rb
+}
+
+// TestGitleaksNeutralizesRepoControls checks that the repository cannot tune
+// gitleaks (R-C2): the config is the built-in default only, the ignore path
+// is an empty directory outside the repository, and gitleaks:allow comments
+// are ignored.
+func TestGitleaksNeutralizesRepoControls(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		".gitleaks.toml":  "[extend]\nuseDefault = false\n",
+		".gitleaksignore": "src/config.go:generic-api-key:3\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var cfg, ignDir string
+	var ignEntries []os.DirEntry
+	run := func(ctx context.Context, d, name string, args ...string) ([]byte, []byte, int, error) {
+		if name == "git" {
+			return []byte(filepath.Join(d, ".git")), nil, 0, nil
+		}
+		cfg = argAfter(args, "--config")
+		ignDir = argAfter(args, "--gitleaks-ignore-path")
+		b, err := os.ReadFile(cfg)
+		if err != nil {
+			t.Fatalf("config: %v", err)
+		}
+		if string(b) != "[extend]\nuseDefault = true\n" {
+			t.Fatalf("config = %q, want the built-in defaults only", b)
+		}
+		if ignEntries, err = os.ReadDir(ignDir); err != nil {
+			t.Fatalf("ignore path: %v", err)
+		}
+		if !contains(args, "--ignore-gitleaks-allow") {
+			t.Fatalf("args %v lack --ignore-gitleaks-allow", args)
+		}
+		if err := os.WriteFile(argAfter(args, "--report-path"), golden(t, "empty.json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return nil, nil, 0, nil
+	}
+	for _, tgt := range []Target{{Dir: dir}, {Dir: dir, LogOpts: "a..b"}, {Dir: dir, FullHistory: true}} {
+		if _, err := NewGitleaks(run).Scan(context.Background(), tgt); err != nil {
+			t.Fatal(err)
+		}
+		if within(dir, cfg) || within(dir, ignDir) {
+			t.Fatalf("config %s or ignore dir %s is inside the repository", cfg, ignDir)
+		}
+		if len(ignEntries) != 0 {
+			t.Fatalf("ignore dir has %d entries, want none", len(ignEntries))
+		}
+		if _, err := os.Stat(cfg); !os.IsNotExist(err) {
+			t.Fatalf("temp config %s not removed: %v", cfg, err)
+		}
+	}
+}
+
+func TestGitleaksDirStripsSourceLinkPrefix(t *testing.T) {
+	dir := t.TempDir()
+	run := func(ctx context.Context, d, name string, args ...string) ([]byte, []byte, int, error) {
+		src := args[1] // dir <source>
+		report := strings.ReplaceAll(string(golden(t, "dir-absolute.json")), "/repo/", filepath.ToSlash(src))
+		if err := os.WriteFile(argAfter(args, "--report-path"), []byte(report), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return nil, nil, 0, nil
+	}
+	fs, err := NewGitleaks(run).Scan(context.Background(), Target{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) != 1 || fs[0].File != "src/config.go" {
+		t.Fatalf("got %+v", fs)
+	}
+}
+
+func TestGitleaksGitDirErrorIsError(t *testing.T) {
+	run := func(ctx context.Context, d, name string, args ...string) ([]byte, []byte, int, error) {
+		if name == "git" {
+			return nil, []byte("fatal: not a git repository"), 128, nil
+		}
+		t.Fatal("gitleaks must not run without a git dir")
+		return nil, nil, 0, nil
+	}
+	if _, err := NewGitleaks(run).Scan(context.Background(), Target{Dir: t.TempDir(), LogOpts: "a..b"}); err == nil {
+		t.Fatal("want error")
 	}
 }
 
