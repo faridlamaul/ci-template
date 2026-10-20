@@ -121,36 +121,42 @@ func TestLoadInvalidFileWrapsErrConfig(t *testing.T) {
 	}
 }
 
-// yamlToJSONValue converts YAML into values the JSON Schema validator accepts.
+// yamlToJSONValue converts YAML to JSON values for the schema, keeping each
+// scalar's source text for timestamps so the schema sees what the parser sees.
 func yamlToJSONValue(t *testing.T, data []byte) any {
 	t.Helper()
-	var v any
-	if err := yaml.Unmarshal(data, &v); err != nil {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	b, err := json.Marshal(normalize(v)) // time.Time becomes a date string
-	if err != nil {
-		t.Fatal(err)
+	if len(doc.Content) == 0 {
+		return nil
 	}
-	var out any
-	if err := json.Unmarshal(b, &out); err != nil {
-		t.Fatal(err)
-	}
-	return out
+	return nodeValue(t, doc.Content[0])
 }
 
-func normalize(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		for k, e := range x {
-			x[k] = normalize(e)
+func nodeValue(t *testing.T, n *yaml.Node) any {
+	t.Helper()
+	switch n.Kind {
+	case yaml.MappingNode:
+		m := map[string]any{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			m[n.Content[i].Value] = nodeValue(t, n.Content[i+1])
 		}
-	case []any:
-		for i, e := range x {
-			x[i] = normalize(e)
+		return m
+	case yaml.SequenceNode:
+		l := []any{}
+		for _, c := range n.Content {
+			l = append(l, nodeValue(t, c))
 		}
-	case time.Time:
-		return x.Format("2006-01-02")
+		return l
+	}
+	if n.Tag == "!!timestamp" {
+		return n.Value
+	}
+	var v any
+	if err := n.Decode(&v); err != nil {
+		t.Fatal(err)
 	}
 	return v
 }
@@ -171,7 +177,7 @@ func TestSchemaAgreesWithParser(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(files) < 4 && wantOK || len(files) < 6 && !wantOK {
+		if len(files) < 5 && wantOK || len(files) < 10 && !wantOK {
 			t.Fatalf("%s has only %d files", dir, len(files))
 		}
 		for _, f := range files {
@@ -215,5 +221,26 @@ func TestFindingsSchemaAcceptsResult(t *testing.T) {
 	v.(map[string]any)["extra"] = 1
 	if schema.Validate(v) == nil {
 		t.Error("unknown top-level key must be rejected")
+	}
+}
+
+func TestParseRejectsNullFailOn(t *testing.T) {
+	for _, in := range []string{"policy:\n", "policy: {fail_on: null}\n", "policy: {fail_on: {}}\n"} {
+		if _, err := Parse([]byte(in)); !errors.Is(err, ErrConfig) {
+			t.Errorf("%q: err = %v, want ErrConfig", in, err)
+		}
+	}
+}
+
+func TestParseExpiresForms(t *testing.T) {
+	want := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	for _, v := range []string{"2026-12-31", `"2026-12-31"`} {
+		c, err := Parse([]byte("exceptions:\n  - {id: x, reason: r, expires: " + v + "}\n"))
+		if err != nil || !c.Exceptions[0].Expires.Equal(want) {
+			t.Errorf("%s: %v %v", v, c.Exceptions, err)
+		}
+	}
+	if _, err := Parse([]byte("exceptions:\n  - {id: x, reason: r, expires: 2026-12-31T10:00:00Z}\n")); !errors.Is(err, ErrConfig) {
+		t.Errorf("timestamp accepted: %v", err)
 	}
 }

@@ -82,10 +82,52 @@ func (t *Threshold) UnmarshalYAML(n *yaml.Node) error {
 
 // Exception suppresses a finding until Expires (00:00 UTC of the given date).
 type Exception struct {
-	ID      string    `yaml:"id"`
-	Path    string    `yaml:"path"`
-	Reason  string    `yaml:"reason"`
-	Expires time.Time `yaml:"expires"`
+	ID      string
+	Path    string
+	Reason  string
+	Expires time.Time
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler. expires accepts only YYYY-MM-DD
+// (plain or quoted) and is stored at 00:00 UTC of that date.
+func (e *Exception) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: exception must be a mapping", n.Line)
+	}
+	var out Exception
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i], n.Content[i+1]
+		switch k.Value {
+		case "id":
+			if err := v.Decode(&out.ID); err != nil {
+				return err
+			}
+		case "path":
+			if err := v.Decode(&out.Path); err != nil {
+				return err
+			}
+		case "reason":
+			if err := v.Decode(&out.Reason); err != nil {
+				return err
+			}
+		case "expires":
+			if v.Kind != yaml.ScalarNode {
+				return fmt.Errorf("line %d: expires must be a YYYY-MM-DD date", v.Line)
+			}
+			if v.Tag == "!!null" {
+				continue // reported as missing by validate
+			}
+			t, err := time.Parse("2006-01-02", v.Value)
+			if err != nil {
+				return fmt.Errorf("line %d: expires %q must be a YYYY-MM-DD date", v.Line, v.Value)
+			}
+			out.Expires = t
+		default:
+			return fmt.Errorf("line %d: unknown key %q in exception", k.Line, k.Value)
+		}
+	}
+	*e = out
+	return nil
 }
 
 // Config is the parsed .shipguard.yaml.
@@ -145,6 +187,13 @@ func Defaults() Config {
 // Parse decodes YAML over Defaults() and validates it.
 func Parse(data []byte) (Config, error) {
 	c := Defaults()
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return Config{}, fmt.Errorf("%w: %v", ErrConfig, err)
+	}
+	if err := checkNodes(&doc); err != nil {
+		return Config{}, fmt.Errorf("%w: %v", ErrConfig, err)
+	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
@@ -172,7 +221,44 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 
+// child returns the value node for key in mapping n, or nil.
+func child(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// checkNodes rejects shapes that would silently disable gating or that the
+// typed decode cannot distinguish (null/empty policy, numeric durations).
+func checkNodes(doc *yaml.Node) error {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil
+	}
+	root := doc.Content[0]
+	if p := child(root, "policy"); p != nil {
+		if p.Tag == "!!null" {
+			return errors.New("policy must not be null")
+		}
+		if f := child(p, "fail_on"); f != nil && (f.Tag == "!!null" || (f.Kind == yaml.MappingNode && len(f.Content) == 0)) {
+			return errors.New("policy.fail_on must not be null or empty")
+		}
+	}
+	if d := child(child(root, "timeouts"), "per_scanner"); d != nil && d.Tag != "!!str" {
+		return errors.New("timeouts.per_scanner must be a duration string such as \"15m\"")
+	}
+	return nil
+}
+
 func (c Config) validate() error {
+	if len(c.Policy.FailOn) == 0 {
+		return errors.New("policy.fail_on must not be empty")
+	}
 	if c.Version != 1 {
 		return fmt.Errorf("version must be 1, got %d", c.Version)
 	}

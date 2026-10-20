@@ -98,7 +98,10 @@
       "properties": {
         "per_scanner": {
           "type": "string",
-          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "not": {
+            "pattern": "^(0+(\\.0*)?(ns|us|µs|ms|s|m|h))+$"
+          }
         }
       }
     },
@@ -111,154 +114,19 @@
           "additionalProperties": false,
           "properties": {
             "secrets": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "any",
-                    "critical",
-                    "high",
-                    "medium",
-                    "low",
-                    "info"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "severity": {
-                      "type": "string",
-                      "enum": [
-                        "critical",
-                        "high",
-                        "medium",
-                        "low",
-                        "info"
-                      ]
-                    },
-                    "fix_available_only": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "severity"
-                  ]
-                }
-              ]
+              "$ref": "#/$defs/threshold"
             },
             "sast": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "any",
-                    "critical",
-                    "high",
-                    "medium",
-                    "low",
-                    "info"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "severity": {
-                      "type": "string",
-                      "enum": [
-                        "critical",
-                        "high",
-                        "medium",
-                        "low",
-                        "info"
-                      ]
-                    },
-                    "fix_available_only": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "severity"
-                  ]
-                }
-              ]
+              "$ref": "#/$defs/threshold"
             },
             "sca": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "any",
-                    "critical",
-                    "high",
-                    "medium",
-                    "low",
-                    "info"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "severity": {
-                      "type": "string",
-                      "enum": [
-                        "critical",
-                        "high",
-                        "medium",
-                        "low",
-                        "info"
-                      ]
-                    },
-                    "fix_available_only": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "severity"
-                  ]
-                }
-              ]
+              "$ref": "#/$defs/threshold"
             },
             "iac": {
-              "oneOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "any",
-                    "critical",
-                    "high",
-                    "medium",
-                    "low",
-                    "info"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "severity": {
-                      "type": "string",
-                      "enum": [
-                        "critical",
-                        "high",
-                        "medium",
-                        "low",
-                        "info"
-                      ]
-                    },
-                    "fix_available_only": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "severity"
-                  ]
-                }
-              ]
+              "$ref": "#/$defs/threshold"
             }
-          }
+          },
+          "minProperties": 1
         }
       }
     },
@@ -290,6 +158,45 @@
           "expires"
         ]
       }
+    }
+  },
+  "$defs": {
+    "threshold": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "any",
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "info"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "severity": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "high",
+                "medium",
+                "low",
+                "info"
+              ]
+            },
+            "fix_available_only": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "severity"
+          ]
+        }
+      ]
     }
   }
 }
