@@ -833,7 +833,7 @@ func Report(ctx context.Context, dir, format string, r finding.Result, d policy.
   - Keep the existing reusable-workflow section under "Legacy workflows" with its examples corrected to `@v1.0.3`. The floating `v1` tag starts with the first shipguard release.
 - Create:
   - `docs/github.md`, `docs/gitlab.md`, `docs/bitbucket.md`: usage, inputs, permissions, hardening (SHA and digest pinning, `cosign verify` command), tier notes
-  - `docs/configuration.md`: every `.shipguard.yaml` key, the default policy, exceptions, PR base-policy behaviour, CODEOWNERS recommendation, air-gapped variables (`SHIPGUARD_TRIVY_DB_REPOSITORY`, `SHIPGUARD_OSV_OFFLINE_DB`)
+  - `docs/configuration.md`: every `.shipguard.yaml` key, the default policy, exceptions, PR base-policy behaviour, CODEOWNERS recommendation, air-gapped variables (`SHIPGUARD_TRIVY_CHECKS_BUNDLE_REPOSITORY`, `SHIPGUARD_OSV_OFFLINE_DB`, `SHIPGUARD_BITBUCKET_PROXY` incl. `none`)
   - `examples/github/security.yml`, `examples/gitlab/.gitlab-ci.yml`, `examples/bitbucket/bitbucket-pipelines.yml`: exactly the spec §5.4 snippets
   - `CONTRIBUTING.md`, `SECURITY.md`: adapted from shiptag
 

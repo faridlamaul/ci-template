@@ -170,10 +170,10 @@ Every rule must have positive and negative test cases that pass `opengrep --test
 
 ### 4.3 Vulnerability databases
 
-The trivy and osv-scanner databases are downloaded at runtime and are not baked into the image, so they never go stale. Adapters cache them with each platform's cache mechanism.
+osv-scanner queries the OSV database at runtime, and trivy fetches its misconfiguration checks bundle at runtime; neither is baked into the image, so they never go stale. Adapters cache them with each platform's cache mechanism (see §12 A6).
 
 For mirrors and air-gapped environments:
-- `SHIPGUARD_TRIVY_DB_REPOSITORY` points trivy at a mirror.
+- `SHIPGUARD_TRIVY_CHECKS_BUNDLE_REPOSITORY` points trivy at a checks-bundle mirror.
 - osv-scanner offline mode reads a local database path.
 
 ## 5. Configuration and adapter interface
@@ -427,3 +427,13 @@ Breaking any of them requires a major release.
 | # | Question | Fallback if it fails |
 |---|---|---|
 | V7 | Can a called reusable workflow read its own commit SHA? | OIDC `job_workflow_sha` claim; callers add `id-token: write` |
+
+**A6. Decisions made during implementation (Tasks 1–17).**
+- **trivy:** config and license scans (trivy 0.76) do not use the vulnerability DB. The DB download was dropped. `trivy config` is retried 3 times because it fetches the checks bundle, and mirrors use `SHIPGUARD_TRIVY_CHECKS_BUNDLE_REPOSITORY`.
+- **Raw output:** every scanner writes its tool output to a temp file outside the repo. `.shipguard/raw/<tool>.json` holds only the normalized findings, so no source lines or secrets are kept.
+- **License deny:** entries match the whole license family. `GPL-3.0` also matches `GPL-3.0-only`, `GPL-3.0-or-later` and `GPL-3.0+`.
+- **Gate fails closed (exit 2)** in two cases:
+  - on a PR without `.shipguard/policy.yaml`;
+  - when no scanner ran.
+- **PR diff:** fingerprints are matched as a multiset, so a second identical vulnerable snippet counts as new.
+- **opengrep rule ids:** the config-directory prefix that opengrep adds is stripped, and `disable_rules` takes bare rule ids.
