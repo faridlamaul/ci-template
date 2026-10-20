@@ -230,6 +230,7 @@ func TestTrivyConfigScan(t *testing.T) {
 		t.Fatalf("temp report not removed: %v", err)
 	}
 	want := []string{"config", "--format", "json", "--output", out, "--cache-dir", filepath.Join(cache, "trivy"),
+		"--config", "", "--ignorefile", "",
 		"--skip-dirs", ".shipguard", "--skip-dirs", "node_modules", "--skip-dirs", "vendor", "--exit-code", "0", "."}
 	if !reflect.DeepEqual(scan.args, want) {
 		t.Fatalf("args\n got %v\nwant %v", scan.args, want)
@@ -257,7 +258,7 @@ func TestTrivyLicenseScan(t *testing.T) {
 	scan := calls[len(calls)-1]
 	out := argAfter(scan.args, "--output")
 	want := []string{"fs", "--scanners", "license", "--format", "json", "--output", out, "--cache-dir", filepath.Join(cache, "trivy"),
-		"--skip-db-update", "--skip-dirs", "vendor", "--exit-code", "0", "."}
+		"--skip-db-update", "--config", "", "--ignorefile", "", "--skip-dirs", "vendor", "--exit-code", "0", "."}
 	if !reflect.DeepEqual(scan.args, want) {
 		t.Fatalf("args\n got %v\nwant %v", scan.args, want)
 	}

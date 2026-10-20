@@ -40,6 +40,12 @@ func trivySkipDirs(t Target) []string {
 	return a
 }
 
+// trivyNoRepoConfig stops trivy from reading trivy.yaml and .trivyignore
+// from the scanned directory: an empty value disables loading (trivy 0.76).
+// Policy lives only in .shipguard.yaml (R-C2). Inline "trivy:ignore"
+// comments have no off switch in trivy 0.76 and still apply.
+var trivyNoRepoConfig = []string{"--config", "", "--ignorefile", ""}
+
 type trivyReport struct {
 	Results []struct {
 		Target            string `json:"Target"`
@@ -175,6 +181,7 @@ func NewTrivyConfig(run Runner) Scanner {
 			if repo := os.Getenv("SHIPGUARD_TRIVY_CHECKS_BUNDLE_REPOSITORY"); repo != "" {
 				a = append(a, "--checks-bundle-repository", repo)
 			}
+			a = append(a, trivyNoRepoConfig...)
 			a = append(a, trivySkipDirs(t)...)
 			return append(a, "--exit-code", "0", ".")
 		},
@@ -189,6 +196,7 @@ func NewTrivyLicense(run Runner) Scanner {
 		args: func(t Target, output string) []string {
 			a := []string{"fs", "--scanners", "license", "--format", "json", "--output", output,
 				"--cache-dir", trivyCache(t), "--skip-db-update"}
+			a = append(a, trivyNoRepoConfig...)
 			a = append(a, trivySkipDirs(t)...)
 			return append(a, "--exit-code", "0", ".")
 		},
