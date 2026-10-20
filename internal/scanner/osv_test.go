@@ -294,6 +294,41 @@ func TestOSVRetriesRunnerErrorThenSucceeds(t *testing.T) {
 	}
 }
 
+// TestOSVNeutralizesRepoConfig checks that the repository cannot tune
+// osv-scanner (R-C2): the config is an empty file outside the repository and
+// .gitignore does not hide lockfiles.
+func TestOSVNeutralizesRepoConfig(t *testing.T) {
+	noSleep(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "osv-scanner.toml"), []byte("[[PackageOverrides]]\nignore = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var cfg string
+	var cfgContent []byte
+	var args []string
+	inner := osvRunner(t, osvGolden(t), 1, nil, &args)
+	run := func(ctx context.Context, d, name string, a ...string) ([]byte, []byte, int, error) {
+		cfg = argAfter(a, "--config")
+		var err error
+		if cfgContent, err = os.ReadFile(cfg); err != nil {
+			t.Fatalf("config: %v", err)
+		}
+		return inner(ctx, d, name, a...)
+	}
+	if _, err := NewOSV(run).Scan(context.Background(), Target{Dir: dir, RawDir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg == "" || within(dir, cfg) || len(cfgContent) != 0 {
+		t.Fatalf("config %q (content %q) must be an empty file outside the repository", cfg, cfgContent)
+	}
+	if _, err := os.Stat(cfg); !os.IsNotExist(err) {
+		t.Fatalf("temp config not removed: %v", err)
+	}
+	if !contains(args, "--no-ignore") {
+		t.Fatalf("args %v lack --no-ignore", args)
+	}
+}
+
 func TestOSVEmptyOutputIsError(t *testing.T) {
 	noSleep(t)
 	s := NewOSV(osvRunner(t, nil, 0, nil, nil))

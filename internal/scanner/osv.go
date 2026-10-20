@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -221,9 +222,16 @@ func normVersion(v string) string {
 	return v
 }
 
-func (o *osv) args(output string) []string {
+// osvConfig is an empty osv-scanner config. Passed with --config it replaces
+// any osv-scanner.toml in the repository (R-C2).
+const osvConfig = ""
+
+func (o *osv) args(output, config string) []string {
 	// --output-file replaces the deprecated --output (osv-scanner v2.7.0).
-	a := []string{"scan", "source", "-r", "--format", "json", "--output-file", output}
+	// Policy lives only in .shipguard.yaml (R-C2): --config overrides every
+	// osv-scanner.toml, and --no-ignore stops .gitignore from hiding
+	// lockfiles; shipguard's excludes are applied to the findings.
+	a := []string{"scan", "source", "-r", "--format", "json", "--output-file", output, "--config", config, "--no-ignore"}
 	if db := os.Getenv("SHIPGUARD_OSV_OFFLINE_DB"); db != "" {
 		a = append(a, "--offline-vulnerabilities", "--local-db-path", db)
 	}
@@ -239,12 +247,21 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 		return nil, err
 	}
 	defer os.Remove(output)
+	work, err := tempDir(t, "osv")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(work)
+	config := filepath.Join(work, "osv-scanner.toml")
+	if err := os.WriteFile(config, []byte(osvConfig), 0o600); err != nil {
+		return nil, fmt.Errorf("write osv-scanner config: %w", err)
+	}
 
 	// Exit 128 means no packages were found: zero findings, not an error.
 	noPackages := false
 	err = Retry(ctx, 3, osvSleep, func() error {
 		// Stderr is dropped: it can echo paths and package names.
-		_, _, code, err := o.run(ctx, t.Dir, "osv-scanner", o.args(output)...)
+		_, _, code, err := o.run(ctx, t.Dir, "osv-scanner", o.args(output, config)...)
 		if err != nil {
 			return fmt.Errorf("osv-scanner: %w", err)
 		}
