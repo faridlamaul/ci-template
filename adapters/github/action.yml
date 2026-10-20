@@ -1,0 +1,199 @@
+name: shipguard
+description: Scan for secrets, SAST, SCA and IaC issues, gate on the policy and report to GitHub.
+author: faridlamaul
+
+inputs:
+  scanners:
+    description: Comma-separated scanners to run, or "all".
+    default: all
+  mode:
+    description: Gate mode (enforce or audit). Empty uses the policy default.
+    default: ""
+  config:
+    description: Path to the shipguard config file.
+    default: .shipguard.yaml
+  image:
+    description: Image to run. Empty resolves it from the action ref, or builds from source.
+    default: ""
+  upload_sarif:
+    description: Upload SARIF to code scanning (auto, true or false). Auto tolerates upload failures.
+    default: auto
+
+outputs:
+  result:
+    description: Gate result (pass, fail or audit).
+    value: ${{ steps.results.outputs.result }}
+  new_findings:
+    description: Number of new findings.
+    value: ${{ steps.results.outputs.new_findings }}
+  total_findings:
+    description: Total number of findings.
+    value: ${{ steps.results.outputs.total_findings }}
+
+runs:
+  using: composite
+  steps:
+    # Order: explicit image input, published tag image (direct use at vX.Y.Z),
+    # then a build from the action checkout (local path, branch or SHA ref).
+    - name: Resolve image
+      id: image
+      shell: bash
+      env:
+        INPUT_IMAGE: ${{ inputs.image }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        if [ -n "$INPUT_IMAGE" ]; then
+          image="$INPUT_IMAGE"
+        elif [[ "$ACTION_REF" =~ ^v[0-9]+(\.[0-9]+){0,2}$ ]]; then
+          image="ghcr.io/faridlamaul/shipguard:$ACTION_REF"
+        else
+          docker build -t shipguard:local "$GITHUB_ACTION_PATH/../.."
+          image="shipguard:local"
+        fi
+        echo "image=$image" >> "$GITHUB_OUTPUT"
+
+    - name: Compute cache key
+      id: week
+      shell: bash
+      run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore scanner database cache
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ github.workspace }}/.shipguard-cache
+        key: shipguard-db-${{ runner.os }}-${{ steps.week.outputs.week }}
+        restore-keys: |
+          shipguard-db-${{ runner.os }}-
+
+    # The container only sees the workspace: no runner command files
+    # (GITHUB_OUTPUT, GITHUB_ENV, GITHUB_PATH, step summary) and no token.
+    # Results come back through .shipguard/gate.env, parsed by the next step.
+    # The container exit code is recorded and re-raised by the last step so
+    # the SARIF upload still runs after a policy failure.
+    - name: Run shipguard
+      id: run
+      shell: bash
+      env:
+        IMAGE: ${{ steps.image.outputs.image }}
+        INPUT_SCANNERS: ${{ inputs.scanners }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_CONFIG: ${{ inputs.config }}
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/.shipguard-cache"
+        out="${SHIPGUARD_DIR:-$GITHUB_WORKSPACE}/.shipguard"
+        if [ -L "$out" ]; then
+          echo "::error::$out is a symlink; refusing to run"
+          exit 2
+        fi
+        rm -f "$out/gate.env" "$out/summary.md" "$out/shipguard.sarif"
+        [ -n "$INPUT_SCANNERS" ] && export SHIPGUARD_SCANNERS="$INPUT_SCANNERS"
+        [ -n "$INPUT_MODE" ] && export SHIPGUARD_MODE="$INPUT_MODE"
+        # The default config path is optional; an explicit one must exist.
+        if [ -n "$INPUT_CONFIG" ] && [ "$INPUT_CONFIG" != ".shipguard.yaml" ]; then
+          export SHIPGUARD_CONFIG="$INPUT_CONFIG"
+        fi
+
+        # Explicit allowlist: never forward GITHUB_TOKEN, ACTIONS_* or
+        # runner command files.
+        args=()
+        for name in GITHUB_ACTIONS GITHUB_EVENT_NAME GITHUB_BASE_REF GITHUB_REF_TYPE \
+          GITHUB_SHA GITHUB_REPOSITORY GITHUB_WORKSPACE; do
+          args+=(-e "$name")
+        done
+        while IFS= read -r name; do
+          case "$name" in SHIPGUARD_*) args+=(-e "$name") ;; esac
+        done < <(compgen -e)
+
+        set +e
+        docker run --rm \
+          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+          -w "$GITHUB_WORKSPACE" \
+          "${args[@]}" \
+          "$IMAGE" run
+        code=$?
+        set -e
+
+        if [ -L "$out/shipguard.sarif" ]; then
+          echo "::warning::$out/shipguard.sarif is a symlink; skipping SARIF upload"
+        elif [ -f "$out/shipguard.sarif" ]; then
+          echo "sarif=$out/shipguard.sarif" >> "$GITHUB_OUTPUT"
+        fi
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+    # Strict host-side parse: three known keys, fixed value shapes. Anything
+    # else leaves the outputs empty, which is never a pass.
+    - name: Publish results
+      id: results
+      if: ${{ always() && steps.run.outputs.exit_code != '' }}
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+      run: |
+        out="${SHIPGUARD_DIR:-$GITHUB_WORKSPACE}/.shipguard"
+        if [ -L "$out" ]; then
+          echo "::error::$out is a symlink; refusing to read results"
+          exit 2
+        fi
+        valid=false
+        if [ -f "$out/gate.env" ] && [ ! -L "$out/gate.env" ]; then
+          result="" new="" total=""
+          while IFS='=' read -r key value; do
+            case "$key" in
+              SHIPGUARD_RESULT) [[ "$value" =~ ^(pass|fail|audit)$ ]] && result="$value" ;;
+              SHIPGUARD_NEW_FINDINGS) [[ "$value" =~ ^[0-9]+$ ]] && new="$value" ;;
+              SHIPGUARD_TOTAL_FINDINGS) [[ "$value" =~ ^[0-9]+$ ]] && total="$value" ;;
+            esac
+          done < "$out/gate.env"
+          if [ -n "$result" ] && [ -n "$new" ] && [ -n "$total" ]; then
+            {
+              echo "result=$result"
+              echo "new_findings=$new"
+              echo "total_findings=$total"
+            } >> "$GITHUB_OUTPUT"
+            valid=true
+          else
+            echo "::warning::shipguard gate.env is incomplete or invalid; outputs left empty"
+          fi
+        else
+          echo "::warning::shipguard wrote no gate.env; outputs left empty"
+        fi
+        if [ -f "$out/summary.md" ] && [ ! -L "$out/summary.md" ]; then
+          head -c 1000000 "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        # A completed gate always writes gate.env: exit 0 without it is never a pass.
+        if [ "$valid" != true ] && [ "$EXIT_CODE" = "0" ]; then
+          echo "::error::shipguard exited 0 but produced no valid gate.env; failing closed"
+          exit 2
+        fi
+
+    - name: Save scanner database cache
+      if: ${{ always() && steps.run.outputs.exit_code != '' && steps.cache.outputs.cache-hit != 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ github.workspace }}/.shipguard-cache
+        key: shipguard-db-${{ runner.os }}-${{ steps.week.outputs.week }}
+
+    - name: Upload SARIF
+      id: upload
+      if: ${{ always() && inputs.upload_sarif != 'false' && steps.run.outputs.sarif != '' }}
+      continue-on-error: ${{ inputs.upload_sarif == 'auto' }}
+      uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+      with:
+        sarif_file: ${{ steps.run.outputs.sarif }}
+        category: shipguard
+
+    - name: Warn on SARIF upload failure
+      if: ${{ always() && inputs.upload_sarif == 'auto' && steps.upload.outcome == 'failure' }}
+      shell: bash
+      run: |
+        echo "::warning::SARIF upload failed; Code Scanning was not updated"
+        echo "> **Warning:** SARIF upload failed; Code Scanning was not updated." >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Exit with shipguard status
+      if: ${{ always() && steps.run.outputs.exit_code != '' && steps.run.outputs.exit_code != '0' }}
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+      run: exit "$EXIT_CODE"

@@ -1,0 +1,79 @@
+name: Adapter GitHub
+
+# Self-test of the GitHub adapter: the reusable workflow (job reusable) and the
+# composite action on its own (job composite).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  reusable:
+    name: Reusable workflow (audit)
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: ./.github/workflows/scan.yml
+    with:
+      mode: audit
+
+  assert-reusable:
+    name: Assert reusable result
+    needs: reusable
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Assert result is audit
+        env:
+          RESULT: ${{ needs.reusable.outputs.result }}
+        run: |
+          echo "result=$RESULT"
+          test "$RESULT" = "audit"
+
+  composite:
+    name: Composite action (fixture fails)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The fixture becomes its own repository so the scan is isolated from
+      # this one. SHIPGUARD_EVENT=push avoids the pull request base lookup.
+      - name: Prepare fixture repository
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_AUTHOR_NAME: fixture
+          GIT_AUTHOR_EMAIL: fixture@example.invalid
+          GIT_COMMITTER_NAME: fixture
+          GIT_COMMITTER_EMAIL: fixture@example.invalid
+        run: |
+          cp -R testdata/fixtures/python "$GITHUB_WORKSPACE/_fixture"
+          cd "$GITHUB_WORKSPACE/_fixture"
+          git init -q -b main
+          git add -A
+          git -c commit.gpgsign=false commit -q -m fixture
+
+      - name: Run composite action
+        id: scan
+        continue-on-error: true
+        uses: ./adapters/github
+        env:
+          SHIPGUARD_DIR: ${{ github.workspace }}/_fixture
+          SHIPGUARD_EVENT: push
+        with:
+          upload_sarif: 'false'
+
+      - name: Assert result is fail
+        env:
+          RESULT: ${{ steps.scan.outputs.result }}
+          OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          echo "result=$RESULT outcome=$OUTCOME"
+          test "$OUTCOME" = "failure"
+          test "$RESULT" = "fail"
