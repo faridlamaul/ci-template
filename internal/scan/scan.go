@@ -155,7 +155,7 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		}
 		hr := headResult{s: s, run: finding.ScannerRun{Name: s.Name(), Category: cat}}
 		if !enabled(cfg, cat) {
-			hr.run.Status = "skipped"
+			hr.run.Status = finding.RunStatusSkipped
 			results = append(results, hr)
 			continue
 		}
@@ -174,7 +174,7 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		if err != nil {
 			hr.run.Status, hr.run.Error = finding.RunStatusError, err.Error()
 		} else {
-			hr.run.Status, hr.findings = "ok", fs
+			hr.run.Status, hr.findings = finding.RunStatusOK, fs
 		}
 		status := finding.StatusNone
 		if pr {
@@ -233,7 +233,7 @@ func markExisting(ctx context.Context, dir, baseSHA string, head scanner.Target,
 
 	for i := range results {
 		hr := &results[i]
-		if hr.run.Status != "ok" || hr.run.Category == finding.CategorySecrets || len(hr.findings) == 0 {
+		if hr.run.Status != finding.RunStatusOK || hr.run.Category == finding.CategorySecrets || len(hr.findings) == 0 {
 			continue
 		}
 		if wt == "" && wtErr == nil {

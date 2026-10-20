@@ -1,8 +1,10 @@
 package finding
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +89,20 @@ func TestLicenseKey(t *testing.T) {
 		if got := LicenseKey(in); got != want {
 			t.Errorf("LicenseKey(%q) = %q want %q", in, got, want)
 		}
+	}
+}
+
+func TestRunStatusesMatchSchema(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "schema", "findings.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{RunStatusOK, RunStatusError, RunStatusSkipped} {
+		if !strings.Contains(string(b), `"`+s+`"`) {
+			t.Errorf("run status %q is not in the findings schema", s)
+		}
+	}
+	if RunStatusOK != "ok" || RunStatusError != "error" || RunStatusSkipped != "skipped" {
+		t.Fatalf("run status values changed: %q %q %q", RunStatusOK, RunStatusError, RunStatusSkipped)
 	}
 }

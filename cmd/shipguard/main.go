@@ -183,7 +183,7 @@ func doScan(ctx context.Context, g *globals, getenv func(string) string, stdout,
 		return &exitcode.Err{Code: exitcode.Error, Err: err}
 	}
 	for _, r := range res.Scanners {
-		if r.Status == "error" {
+		if r.Status == finding.RunStatusError {
 			fmt.Fprintf(stderr, "warning: %s failed: %s\n", r.Name, r.Error)
 		}
 	}
@@ -280,7 +280,7 @@ func doGate(g *globals, getenv func(string) string, stdout io.Writer) error {
 // skipped-only list means nothing was scanned, which is never a pass.
 func scannerRan(r finding.Result) bool {
 	for _, s := range r.Scanners {
-		if s.Status == "ok" || s.Status == "error" {
+		if s.Status == finding.RunStatusOK || s.Status == finding.RunStatusError {
 			return true
 		}
 	}
