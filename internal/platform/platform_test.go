@@ -1,6 +1,9 @@
 package platform
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func env(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
@@ -19,6 +22,8 @@ func TestDetect(t *testing.T) {
 		{"github schedule", map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule"},
 			Context{Platform: "github", Event: EventSchedule}},
 		{"github tag", map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push", "GITHUB_REF_TYPE": "tag"},
+			Context{Platform: "github", Event: EventTag}},
+		{"github dispatch on tag", map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF_TYPE": "tag"},
 			Context{Platform: "github", Event: EventTag}},
 		{"github manual", map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch"},
 			Context{Platform: "github", Event: EventManual}},
@@ -67,5 +72,16 @@ func TestDetect(t *testing.T) {
 func TestDetectNilGetenv(t *testing.T) {
 	if got := Detect(nil); got.Platform != "local" || got.Event != EventPush {
 		t.Errorf("Detect(nil) = %+v", got)
+	}
+}
+
+func TestContextJSONKeys(t *testing.T) {
+	b, err := json.Marshal(Context{Platform: "github", Event: EventPR, HeadSHA: "a", BaseRef: "b", DefaultBranch: "c", Repo: "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"platform":"github","event":"pr","head_sha":"a","base_ref":"b","default_branch":"c","repo":"d"}`
+	if string(b) != want {
+		t.Errorf("json = %s, want %s", b, want)
 	}
 }

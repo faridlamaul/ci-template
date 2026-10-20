@@ -39,11 +39,12 @@ func Detect(getenv func(string) string) Context {
 			c.Event, c.BaseRef = EventPR, getenv("GITHUB_BASE_REF")
 		case "schedule":
 			c.Event = EventSchedule
-		case "workflow_dispatch":
-			c.Event = EventManual
 		default:
-			if getenv("GITHUB_REF_TYPE") == "tag" {
+			switch {
+			case getenv("GITHUB_REF_TYPE") == "tag":
 				c.Event = EventTag
+			case getenv("GITHUB_EVENT_NAME") == "workflow_dispatch":
+				c.Event = EventManual
 			}
 		}
 	case getenv("GITLAB_CI") == "true":
