@@ -219,3 +219,30 @@ func TestUnshallowSingleBranchClone(t *testing.T) {
 		t.Errorf("origin/main = %s, want %s after Unshallow", out, mainSHA)
 	}
 }
+
+func TestIsAncestor(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	one := r.Commit("one", "a.txt")
+	two := r.Commit("two", "a.txt")
+	r.Git("checkout", "-q", "-b", "side", one)
+	side := r.Commit("side", "b.txt")
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{one, two, true}, {two, two, true}, {two, one, false}, {side, two, false}, {two, side, false},
+	}
+	for _, c := range cases {
+		got, err := IsAncestor(r.Dir, c.a, c.b)
+		if err != nil || got != c.want {
+			t.Errorf("IsAncestor(%.7s, %.7s) = %v, %v; want %v", c.a, c.b, got, err, c.want)
+		}
+	}
+	if _, err := IsAncestor(r.Dir, "nope", two); err == nil {
+		t.Error("unknown revision: want error")
+	}
+	if _, err := IsAncestor(r.Dir, "--all", two); err == nil {
+		t.Error("option-like revision: want error")
+	}
+}

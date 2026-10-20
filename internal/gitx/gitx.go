@@ -132,6 +132,27 @@ func Unshallow(dir string) error {
 	return nil
 }
 
+// IsAncestor reports whether commit a is an ancestor of (or equal to) b.
+func IsAncestor(dir, a, b string) (bool, error) {
+	for _, r := range []string{a, b} {
+		if err := checkRev(r); err != nil {
+			return false, fmt.Errorf("is-ancestor: %w", err)
+		}
+		if _, err := commit(dir, r); err != nil {
+			return false, fmt.Errorf("is-ancestor: unknown revision %q: %w", r, err)
+		}
+	}
+	_, err := git(dir, "merge-base", "--is-ancestor", a, b)
+	if err == nil {
+		return true, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("is-ancestor: %w", err)
+}
+
 // Worktree checks out sha as a detached worktree in a new temp dir. cleanup
 // removes the worktree and the temp dir; it is safe to call more than once.
 func Worktree(dir, sha string) (string, func(), error) {

@@ -314,19 +314,49 @@ func TestScanPREmptyBaseRefFailsClosed(t *testing.T) {
 	}
 }
 
-func TestScanPRBitbucketUnshallows(t *testing.T) {
+// shallowClone returns a depth-1 clone of the feature branch of an origin
+// with main (two commits) and feature, plus main's SHA.
+func shallowClone(t *testing.T, extra ...string) (dir, mainSHA string) {
+	t.Helper()
 	isolate(t)
 	origin := gitfixture.New(t)
 	origin.Commit("one", "a.txt")
-	origin.Commit("two", "a.txt")
-	dst := filepath.Join(t.TempDir(), "clone")
-	origin.Git("clone", "-q", "--depth", "1", "file://"+origin.Dir, dst)
-	c := &gitfixture.Repo{T: t, Dir: dst}
+	mainSHA = origin.Commit("two", "a.txt")
+	origin.Git("checkout", "-q", "-b", "feature")
+	origin.Commit("feat", "b.txt")
+	origin.Git("checkout", "-q", "main")
+	dir = filepath.Join(t.TempDir(), "clone")
+	origin.Git(append(append([]string{"clone", "-q", "--depth", "1", "--branch", "feature"}, extra...), "file://"+origin.Dir, dir)...)
+	return dir, mainSHA
+}
 
+func isShallow(t *testing.T, dir string) bool {
+	t.Helper()
+	return (&gitfixture.Repo{T: t, Dir: dir}).Git("rev-parse", "--is-shallow-repository") == "true"
+}
+
+func TestScanPRBitbucketUnshallows(t *testing.T) {
+	dir, _ := shallowClone(t, "--no-single-branch")
 	ctx := platform.Context{Platform: "bitbucket", Event: platform.EventPR, BaseRef: "main"}
-	runScan(t, Options{Dir: c.Dir, Ctx: ctx})
-	if out := c.Git("rev-parse", "--is-shallow-repository"); out != "false" {
-		t.Fatalf("is-shallow = %s, want false after a Bitbucket PR scan", out)
+	runScan(t, Options{Dir: dir, Ctx: ctx})
+	if isShallow(t, dir) {
+		t.Fatal("still shallow after a Bitbucket PR scan")
+	}
+}
+
+func TestScanPRHeadIsBaseFailsClosed(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	first := r.Commit("one", "a.txt")
+	r.Commit("two", "a.txt")
+	_, _, err := Run(context.Background(), Options{Dir: r.Dir, Ctx: prCtx(), Categories: allCats(), Now: fixedNow})
+	if err == nil || !strings.Contains(err.Error(), "HEAD is the base ref; check out the PR head") {
+		t.Fatalf("HEAD == base: err = %v", err)
+	}
+	r.Git("checkout", "-q", "-b", "stale", first)
+	_, _, err = Run(context.Background(), Options{Dir: r.Dir, Ctx: prCtx(), Categories: allCats(), Now: fixedNow})
+	if err == nil || !strings.Contains(err.Error(), "HEAD is the base ref; check out the PR head") {
+		t.Fatalf("HEAD behind base: err = %v", err)
 	}
 }
 

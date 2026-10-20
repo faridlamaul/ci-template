@@ -136,6 +136,15 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		if baseSHA, err = gitx.ResolveRef(o.Dir, o.Ctx.BaseRef); err != nil {
 			return finding.Result{}, policy.Config{}, err
 		}
+		// pull_request_target, for one, checks out the base by default:
+		// the scan would compare the base with itself and pass.
+		behind, err := gitx.IsAncestor(o.Dir, "HEAD", baseSHA)
+		if err != nil {
+			return finding.Result{}, policy.Config{}, err
+		}
+		if behind {
+			return finding.Result{}, policy.Config{}, fmt.Errorf("%w: HEAD is the base ref; check out the PR head (HEAD is %s or an ancestor of it)", policy.ErrConfig, o.Ctx.BaseRef)
+		}
 	}
 
 	ec, err := effectiveConfig(o.Dir, o.ConfigPath, baseSHA, o.Mode)
