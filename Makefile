@@ -3,7 +3,7 @@ INSTALL_DIR=$(HOME)/.local/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
-.PHONY: all build install test vet fmt-check clean image-test e2e
+.PHONY: all build install test vet fmt-check clean image-test e2e docs-check
 
 all: build
 
@@ -34,3 +34,7 @@ image-test:
 
 e2e: image-test
 	SHIPGUARD_IMAGE=shipguard:dev go test -tags e2e -count=1 ./e2e/
+
+# Validates every `.shipguard.yaml` snippet in README.md and docs/*.md with the real CLI.
+docs-check:
+	./scripts/docs-check.sh
