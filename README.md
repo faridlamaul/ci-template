@@ -1,15 +1,106 @@
-# 🚀 ci-template
+# 🛡️ shipguard
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub Actions](https://img.shields.io/badge/GitHub-Actions-2088FF?logo=github-actions&logoColor=white)]()
 
-A centralized repository of **reusable GitHub Actions workflows** (`workflow_call`) designed for modern open-source projects.
+Security scanning and a policy gate for your CI pipeline, on **GitHub**, **GitLab** and **Bitbucket**.
 
-Instead of duplicating hundreds of lines of CI/CD YAML across every repository, consume these modular workflows with just a few lines of configuration.
+shipguard runs four kinds of scan in one container image, applies one policy file to the results, and reports them to the platform you already use:
+
+| Category | Scanner | Looks at |
+|---|---|---|
+| `secrets` | gitleaks | file contents, and git history on PR and scheduled scans |
+| `sast` | opengrep with the curated rules in `rules/` | source code (Go, JS/TS, Python, Ruby, Rust) |
+| `sca` | osv-scanner, and trivy for licenses | lockfiles and manifests |
+| `iac` | trivy config | Dockerfile, Kubernetes, Helm, Terraform, CloudFormation, Compose |
+
+On a pull request only the findings the PR introduces can fail the gate. On the default branch and on schedules everything above the threshold fails. One file, `.shipguard.yaml`, is the whole policy.
+
+## Status
+
+| Part | State |
+|---|---|
+| Go CLI (`scan`, `gate`, `report`, `run`) | done |
+| GitHub adapter (reusable workflow and composite action) | done |
+| GitLab component | in development, not yet released |
+| Bitbucket pipe | in development, not yet released |
+| Image and version tags | not published yet; there is no release |
+
+Until the first release, the docs write `vX.Y.Z` for the version you will use. On GitHub you can already pin a commit SHA of this repository; the workflow then builds the image from source.
+
+## Quick start (GitHub)
+
+Add `.github/workflows/security.yml`:
+
+```yaml
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+
+jobs:
+  security:
+    uses: faridlamaul/shipguard/.github/workflows/scan.yml@vX.Y.Z
+    permissions: { contents: read, security-events: write, actions: read }
+    with:
+      scanners: all
+      mode: enforce
+      config: .shipguard.yaml
+```
+
+The defaults need no config file. To change them, add a `.shipguard.yaml` (in its own pull request first; see [Configuration](docs/configuration.md#pull-requests-the-policy-comes-from-the-base)):
+
+```yaml shipguard-config
+version: 1
+mode: enforce
+paths:
+  exclude: ["vendor/", "**/testdata/**"]
+exceptions:
+  - id: CVE-2026-1234
+    reason: "Not reachable; waiting for upstream v2.3"
+    expires: 2026-12-31
+```
+
+## Documentation
+
+| Page | Contents |
+|---|---|
+| [docs/configuration.md](docs/configuration.md) | Every `.shipguard.yaml` key, defaults, exceptions, PR policy, ignored scanner config, exit codes, environment variables |
+| [docs/github.md](docs/github.md) | Inputs, permissions, hardening, tier notes |
+| [docs/gitlab.md](docs/gitlab.md) | Planned component usage |
+| [docs/bitbucket.md](docs/bitbucket.md) | Planned pipe usage |
+| [examples/](examples/) | Ready-to-copy pipeline files |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Pass, or `audit` mode with findings |
+| `1` | Policy failure: findings above the threshold |
+| `2` | Tool or configuration error (shipguard fails closed) |
+
+## How it protects the gate
+
+- On a PR the policy is read from the **base** branch, so a PR cannot weaken its own gate. The summary warns when the PR changes `.shipguard.yaml`.
+- Scanner ignore files, config files and inline suppressions (`.gitleaksignore`, `nosemgrep`, `.trivyignore` and so on) are ignored. Exceptions live in `.shipguard.yaml`, with a reason and an expiry date.
+- Secret values are redacted in every output.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ---
 
-## 📦 Available Reusable Workflows
+## Legacy workflows
+
+This repository also still publishes the reusable GitHub Actions workflows (`workflow_call`) it started with. They are separate from shipguard. The examples use `@v1.0.3`, the latest published tag. A floating `v1` tag does not exist yet; it starts with the first shipguard release.
+
+Instead of duplicating hundreds of lines of CI/CD YAML across every repository, consume these modular workflows with just a few lines of configuration.
+
+### 📦 Available Reusable Workflows
 
 | Workflow | Path | Description |
 |---|---|---|
@@ -22,9 +113,9 @@ Instead of duplicating hundreds of lines of CI/CD YAML across every repository, 
 
 ---
 
-## 📖 Quick Usage Examples
+### 📖 Quick Usage Examples
 
-### 1. Automated Semantic Release
+#### 1. Automated Semantic Release
 Add `.github/workflows/release.yml` in your project:
 
 ```yaml
@@ -40,7 +131,7 @@ permissions:
 
 jobs:
   release:
-    uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@v1
+    uses: faridlamaul/shipguard/.github/workflows/semantic-release.yml@v1.0.3
     with:
       bump: auto  # auto, major, minor, or patch
     secrets:
@@ -60,10 +151,10 @@ Outputs: `released` (`true` or `false`) and `version`, the new tag such as `v1.2
 
 ---
 
-### 1b. Full Pipeline: Semantic Release + GoReleaser Binary Packaging
+#### 1b. Full Pipeline: Semantic Release + GoReleaser Binary Packaging
 Combine SemVer versioning and multi-platform binary compilation in `.github/workflows/release.yml`.
 
-#### Manual Trigger (Recommended for deliberate version control):
+##### Manual Trigger (Recommended for deliberate version control):
 Allows selecting version bump type (`patch`, `minor`, `major`) via GitHub Actions UI:
 
 ```yaml
@@ -92,7 +183,7 @@ permissions:
 
 jobs:
   semantic:
-    uses: faridlamaul/ci-template/.github/workflows/semantic-release.yml@v1
+    uses: faridlamaul/shipguard/.github/workflows/semantic-release.yml@v1.0.3
     with:
       bump: ${{ inputs.bump }}
       dry_run: ${{ inputs.dry_run }}
@@ -102,18 +193,19 @@ jobs:
   binary:
     needs: semantic
     if: needs.semantic.outputs.released == 'true' && !inputs.dry_run
-    uses: faridlamaul/ci-template/.github/workflows/go-release.yml@v1
+    uses: faridlamaul/shipguard/.github/workflows/go-release.yml@v1.0.3
     with:
       version: ${{ needs.semantic.outputs.version }}
     secrets:
       token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-#### Automatic Trigger on Push to Main:
+##### Automatic Trigger on Push to Main:
 Replace `on: workflow_dispatch` with `on: push: branches: [main]` to automatically calculate bump and release on every push.
+
 ---
 
-### 2. Go CI (Lint, Test, Build)
+#### 2. Go CI (Lint, Test, Build)
 Add `.github/workflows/ci.yml` in your Go project:
 
 ```yaml
@@ -127,7 +219,7 @@ on:
 
 jobs:
   go-ci:
-    uses: faridlamaul/ci-template/.github/workflows/go-ci.yml@v1
+    uses: faridlamaul/shipguard/.github/workflows/go-ci.yml@v1.0.3
     with:
       go_version: '1.22'
       run_lint: true
@@ -139,7 +231,7 @@ jobs:
 
 ---
 
-### 3. Docker Build & Push to GHCR
+#### 3. Docker Build & Push to GHCR
 Add `.github/workflows/docker.yml` in your project:
 
 ```yaml
@@ -156,7 +248,7 @@ permissions:
 
 jobs:
   docker:
-    uses: faridlamaul/ci-template/.github/workflows/docker-build.yml@v1
+    uses: faridlamaul/shipguard/.github/workflows/docker-build.yml@v1.0.3
     with:
       image_name: ghcr.io/${{ github.repository }}
       platforms: linux/amd64,linux/arm64
@@ -165,7 +257,7 @@ jobs:
 
 ---
 
-### 4. Node.js / TypeScript CI
+#### 4. Node.js / TypeScript CI
 ```yaml
 name: Node CI
 
@@ -176,7 +268,7 @@ on:
 
 jobs:
   node:
-    uses: faridlamaul/ci-template/.github/workflows/node-ci.yml@v1
+    uses: faridlamaul/shipguard/.github/workflows/node-ci.yml@v1.0.3
     with:
       node_version: '20'
       package_manager: pnpm # or npm, yarn, bun
@@ -184,7 +276,7 @@ jobs:
 
 ---
 
-### 5. Python CI
+#### 5. Python CI
 ```yaml
 name: Python CI
 
@@ -195,7 +287,7 @@ on:
 
 jobs:
   python:
-    uses: faridlamaul/ci-template/.github/workflows/python-ci.yml@v1
+    uses: faridlamaul/shipguard/.github/workflows/python-ci.yml@v1.0.3
     with:
       python_version: '3.11'
       run_lint: true
@@ -204,12 +296,12 @@ jobs:
 
 ---
 
-## 🔒 Security & Best Practices
+### 🔒 Security & Best Practices
 
 - All workflows default to minimal permissions (`contents: read`).
 - Workflows requiring write access (such as `semantic-release` creating git tags) explicitly declare `contents: write`.
 - Works out-of-the-box with standard repository `GITHUB_TOKEN` — no manual Personal Access Tokens (PAT) needed unless triggering downstream workflows.
-- Every action is pinned to a commit SHA and every image to a digest. Merges to `main` are released automatically by shiptag; the examples use `@v1`, and callers that want immutability can pin the release commit SHA with a `# vX.Y.Z` comment, which Dependabot keeps up to date.
+- Every action is pinned to a commit SHA and every image to a digest. Merges to `main` are released automatically by shiptag; the examples use `@v1.0.3`, and callers that want immutability can pin the release commit SHA with a `# vX.Y.Z` comment, which Dependabot keeps up to date.
 
 ---
 

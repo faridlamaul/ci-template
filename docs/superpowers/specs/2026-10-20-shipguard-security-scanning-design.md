@@ -262,7 +262,7 @@ Policy lives only in `.shipguard.yaml`. Adapters expose only these inputs.
 jobs:
   security:
     uses: faridlamaul/shipguard/.github/workflows/scan.yml@v1.0.0
-    permissions: { contents: read, security-events: write }
+    permissions: { contents: read, security-events: write, actions: read }
     with:
       scanners: all
       mode: enforce
