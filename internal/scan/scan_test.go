@@ -606,7 +606,8 @@ func TestScanSecretsNotHiddenByExcludes(t *testing.T) {
 func TestScanTargets(t *testing.T) {
 	isolate(t)
 	r := gitfixture.New(t)
-	commitFile(r, ".shipguard.yaml", "version: 1\ntimeouts:\n  per_scanner: 3m\nscanners:\n  sast:\n    rules: [p/x]\n    disable_rules: [r1]\n  sca:\n    licenses:\n      deny: [GPL-3.0]\n")
+	commitFile(r, "rules/x.yaml", "rules: []\n")
+	commitFile(r, ".shipguard.yaml", "version: 1\ntimeouts:\n  per_scanner: 3m\nscanners:\n  sast:\n    rules: [rules/x.yaml, \"https://example.com/r.yaml\"]\n    disable_rules: [r1]\n  sca:\n    licenses:\n      deny: [GPL-3.0]\n")
 	secrets := &fake{name: "gitleaks", cat: finding.CategorySecrets, headDir: r.Dir}
 	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir}
 
@@ -620,7 +621,7 @@ func TestScanTargets(t *testing.T) {
 	if tt.Dir != r.Dir || tt.RawDir != filepath.Join(r.Dir, ".shipguard", "raw") || tt.CacheDir != filepath.Join(r.Dir, ".shipguard-cache") {
 		t.Errorf("dirs = %q %q %q", tt.Dir, tt.RawDir, tt.CacheDir)
 	}
-	if tt.Timeout != 3*time.Minute || !slices.Equal(tt.Rules, []string{"p/x"}) || !slices.Equal(tt.DisableRules, []string{"r1"}) || !slices.Equal(tt.DenyLicenses, []string{"GPL-3.0"}) {
+	if tt.Timeout != 3*time.Minute || !slices.Equal(tt.Rules, []string{filepath.Join(r.Dir, "rules", "x.yaml"), "https://example.com/r.yaml"}) || !slices.Equal(tt.DisableRules, []string{"r1"}) || !slices.Equal(tt.DenyLicenses, []string{"GPL-3.0"}) {
 		t.Errorf("target = %+v", tt)
 	}
 	if tt.FullHistory || tt.LogOpts != "" {
@@ -809,4 +810,73 @@ func TestScanConfigFoundIsNotDefaults(t *testing.T) {
 		t.Error("PolicyDefaults = true with a config file present")
 	}
 	validFindingsJSON(t, r.Dir)
+}
+
+// rulesReader is a SAST scanner that records the content of every rule path
+// it is given while the scan runs (the base worktree is gone afterwards).
+type rulesReader struct {
+	headDir string
+	seen    []string // "<head|base>:<content>"
+}
+
+func (*rulesReader) Name() string               { return "opengrep" }
+func (*rulesReader) Category() finding.Category { return finding.CategorySAST }
+func (r *rulesReader) Scan(_ context.Context, t scanner.Target) ([]finding.Finding, error) {
+	which := "base"
+	if t.Dir == r.headDir {
+		which = "head"
+	}
+	for _, p := range t.Rules {
+		b, err := os.ReadFile(filepath.Join(p, "r.yaml"))
+		if err != nil {
+			return nil, err
+		}
+		r.seen = append(r.seen, which+":"+strings.TrimSpace(string(b)))
+	}
+	f := fnd("opengrep", finding.CategorySAST, "x", "src/a.go")
+	return []finding.Finding{f}, nil
+}
+
+// TestScanPRRulesFromBase: consumer rules are part of the policy, so on a PR
+// relative rule paths are read from the base, never from the PR head (R-C2).
+func TestScanPRRulesFromBase(t *testing.T) {
+	cfg := "version: 1\nscanners:\n  sast:\n    rules: [\"./.shipguard/rules/\"]\n"
+	isolate(t)
+	r := gitfixture.New(t)
+	r.Commit("base", "src/a.go")
+	commitFile(r, ".shipguard/rules/r.yaml", "base-rules")
+	commitFile(r, ".shipguard.yaml", cfg)
+	r.Git("checkout", "-q", "-b", "feature")
+	commitFile(r, ".shipguard/rules/r.yaml", "head-rules")
+
+	sast := &rulesReader{headDir: r.Dir}
+	runScan(t, Options{Dir: r.Dir, Ctx: prCtx(), Scanners: []scanner.Scanner{sast}})
+	if !slices.Equal(sast.seen, []string{"head:base-rules", "base:base-rules"}) {
+		t.Fatalf("rules seen = %v, want the base rules for both scans", sast.seen)
+	}
+
+	// Rules only the PR adds do not exist at the base: fail closed.
+	r.Git("checkout", "-q", "main")
+	commitFile(r, ".shipguard.yaml", "version: 1\nscanners:\n  sast:\n    rules: [\"ci/rules/\"]\n")
+	r.Git("checkout", "-q", "-b", "feature2")
+	commitFile(r, "ci/rules/r.yaml", "head-only")
+	_, _, err := Run(context.Background(), Options{Dir: r.Dir, Ctx: prCtx(), Categories: allCats(), Now: fixedNow,
+		Scanners: []scanner.Scanner{&rulesReader{headDir: r.Dir}}})
+	if !errors.Is(err, policy.ErrConfig) || !strings.Contains(err.Error(), "ci/rules/") {
+		t.Fatalf("rules missing at base: err = %v, want a config error naming the path", err)
+	}
+}
+
+func TestScanMissingRulesFailsClosed(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	commitFile(r, ".shipguard.yaml", "version: 1\nscanners:\n  sast:\n    rules: [missing/]\n")
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir}
+	push := platform.Context{Event: platform.EventPush}
+	_, _, err := Run(context.Background(), Options{Dir: r.Dir, Ctx: push, Categories: allCats(), Now: fixedNow, Scanners: []scanner.Scanner{sast}})
+	if !errors.Is(err, policy.ErrConfig) || !strings.Contains(err.Error(), "missing/") {
+		t.Fatalf("err = %v, want a config error naming the path", err)
+	}
+	// Not checked when SAST does not run.
+	runScan(t, Options{Dir: r.Dir, Ctx: push, Categories: []finding.Category{finding.CategorySCA}, Scanners: []scanner.Scanner{sast}})
 }

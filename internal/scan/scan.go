@@ -151,13 +151,22 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		return finding.Result{}, policy.Config{}, fmt.Errorf("write effective policy: %w", err)
 	}
 
+	base := &baseTree{dir: o.Dir, sha: baseSHA}
+	defer base.close()
+	rules := cfg.Scanners.SAST.Rules
+	if slices.Contains(o.Categories, finding.CategorySAST) && cfg.Scanners.SAST.Enabled {
+		if rules, err = resolveRules(o.Dir, rules, pr, base); err != nil {
+			return finding.Result{}, policy.Config{}, err
+		}
+	}
+
 	head := scanner.Target{
 		Dir:          o.Dir,
 		RawDir:       rawDir,
 		CacheDir:     filepath.Join(o.Dir, CacheDir),
 		Exclude:      append(slices.Clone(cfg.Paths.Exclude), AlwaysExclude...),
 		Timeout:      cfg.Timeouts.PerScanner,
-		Rules:        cfg.Scanners.SAST.Rules,
+		Rules:        rules,
 		DisableRules: cfg.Scanners.SAST.DisableRules,
 		DenyLicenses: cfg.Scanners.SCA.Licenses.Deny,
 	}
@@ -209,7 +218,7 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 	}
 
 	if pr {
-		if err := markExisting(ctx, o.Dir, baseSHA, results, now); err != nil {
+		if err := markExisting(ctx, base, results, now); err != nil {
 			return finding.Result{}, policy.Config{}, err
 		}
 	}
@@ -252,42 +261,91 @@ func fullHistory(dir, plat string) error {
 		"set fetch-depth: 0 on actions/checkout (GitHub) or GIT_DEPTH: 0 (GitLab)", policy.ErrConfig)
 }
 
+// baseTree is the base revision checked out in a temporary worktree, created
+// on first use and shared by everything that reads the base.
+type baseTree struct {
+	dir, sha string
+	wt       string
+	err      error
+	cleanup  func()
+}
+
+func (b *baseTree) path() (string, error) {
+	if b.wt == "" && b.err == nil {
+		b.wt, b.cleanup, b.err = gitx.Worktree(b.dir, b.sha)
+	}
+	return b.wt, b.err
+}
+
+func (b *baseTree) close() {
+	if b.cleanup != nil {
+		b.cleanup()
+	}
+}
+
+// resolveRules turns the consumer rule paths into absolute paths and checks
+// that they exist; URLs are kept as they are. Rules are policy, so on a PR
+// relative paths, and absolute ones inside the repository, are read from the
+// base worktree, never from the PR head (R-C2).
+func resolveRules(dir string, rules []string, pr bool, base *baseTree) ([]string, error) {
+	var out []string
+	for _, r := range rules {
+		if strings.Contains(r, "://") {
+			out = append(out, r)
+			continue
+		}
+		p, inRepo := r, !filepath.IsAbs(r)
+		if !inRepo {
+			if rel, err := filepath.Rel(dir, r); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				p, inRepo = rel, true
+			}
+		}
+		where := ""
+		if inRepo {
+			root := dir
+			if pr {
+				wt, err := base.path()
+				if err != nil {
+					return nil, fmt.Errorf("read sast rules at base: %w", err)
+				}
+				root, where = wt, " at the base ref"
+			}
+			p = filepath.Join(root, p)
+		}
+		if _, err := os.Stat(p); err != nil {
+			return nil, fmt.Errorf("%w: scanners.sast.rules: %s not found%s", policy.ErrConfig, r, where)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 // markExisting scans the base revision in a worktree with every head scanner
 // that succeeded (except secrets, whose log range is already PR-only) and
 // marks head findings whose fingerprint the base also has as existing, at
 // most as many per fingerprint as the base has. A base
 // failure turns the head run into an error and leaves its findings new.
-func markExisting(ctx context.Context, dir, baseSHA string, results []headResult, now func() time.Time) error {
+func markExisting(ctx context.Context, base *baseTree, results []headResult, now func() time.Time) error {
 	baseRaw, err := os.MkdirTemp("", "shipguard-base-raw-*")
 	if err != nil {
 		return fmt.Errorf("create base raw dir: %w", err)
 	}
 	defer os.RemoveAll(baseRaw)
 
-	var wt string
-	var wtErr error
-	cleanup := func() {}
-	defer func() { cleanup() }()
-
 	for i := range results {
 		hr := &results[i]
 		if hr.run.Status != finding.RunStatusOK || hr.run.Category == finding.CategorySecrets || len(hr.findings) == 0 {
 			continue
 		}
-		if wt == "" && wtErr == nil {
-			var c func()
-			if wt, c, wtErr = gitx.Worktree(dir, baseSHA); wtErr == nil {
-				cleanup = c
-			}
-		}
-		if wtErr != nil {
-			hr.run.Status, hr.run.Error = finding.RunStatusError, "base scan failed: "+wtErr.Error()
+		wt, err := base.path()
+		if err != nil {
+			hr.run.Status, hr.run.Error = finding.RunStatusError, "base scan failed: "+err.Error()
 			continue
 		}
 		t := hr.t
 		t.Dir, t.RawDir = wt, baseRaw
 		start := now()
-		base, err := hr.s.Scan(ctx, t)
+		baseFs, err := hr.s.Scan(ctx, t)
 		hr.run.DurationMS += now().Sub(start).Milliseconds()
 		if err != nil {
 			hr.run.Status, hr.run.Error = finding.RunStatusError, "base scan failed: "+err.Error()
@@ -295,8 +353,8 @@ func markExisting(ctx context.Context, dir, baseSHA string, results []headResult
 		}
 		// Multiset match: a PR that adds another copy of an existing
 		// finding gets the extra copy marked new.
-		left := make(map[string]int, len(base))
-		for _, f := range base {
+		left := make(map[string]int, len(baseFs))
+		for _, f := range baseFs {
 			left[f.Fingerprint]++
 		}
 		for j := range hr.findings {
