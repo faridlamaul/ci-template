@@ -1,7 +1,6 @@
 package scanner
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
 )
@@ -271,43 +271,82 @@ func (o *osv) args(output, config string, exclude []string) []string {
 	return append(a, ".")
 }
 
-var osvExtractErr = regexp.MustCompile(`^(?:Error during extraction: \([^)]*\))?\s*(.+?): could not extract`)
+var (
+	osvHeader = regexp.MustCompile(`^Error during extraction: \([^)]*\)\s*(.*)$`)
+	// osvEntry is one failed file: an optional tree marker (osv-scanner prints a
+	// tab or a box-drawing marker), the path from the filesystem root, and the
+	// reason.
+	osvEntry = regexp.MustCompile(`^(?:\s+|[├└]──[┤┘])?(.+): could not extract: .*$`)
+)
+
+const osvCouldNotExtract = ": could not extract"
 
 // osvExtractionFailed reports whether osv-scanner could not parse a manifest
 // or lockfile outside the excluded paths. It says so only on stderr and still
-// exits 0, 1 or 128. Failures in excluded paths (osv-scanner may still walk
-// them, for instance behind a file-shaped exclude) are ignored; a failure
-// whose path cannot be determined or lies outside dir counts, so it fails
-// closed.
+// exits 0, 1 or 128. Failures in excluded paths are ignored.
+//
+// osv-scanner prints repository paths raw, so a directory name with a newline
+// can forge lines. It fails closed: from the first header on, every line must
+// be a header or a well-formed "<dir prefix><rel>: could not extract: ..."
+// entry, with exactly one ": could not extract" and no control characters in
+// rel, and each rel must be excluded.
 func osvExtractionFailed(stderr []byte, dir string, exclude []string) bool {
-	if !bytes.Contains(stderr, []byte("Error during extraction")) && !bytes.Contains(stderr, []byte("could not extract")) {
+	text := string(stderr)
+	if !strings.Contains(text, "Error during extraction") && !strings.Contains(text, "could not extract") {
 		return false
 	}
 	// osv-scanner walks from "/", so it prints paths without the leading slash.
-	prefixes := []string{strings.TrimPrefix(filepath.ToSlash(filepath.Clean(dir)), "/") + "/"}
-	if real, err := filepath.EvalSymlinks(dir); err == nil {
-		prefixes = append(prefixes, strings.TrimPrefix(filepath.ToSlash(real), "/")+"/")
-	}
-	found := false
-	for _, line := range strings.Split(string(stderr), "\n") {
-		m := osvExtractErr.FindStringSubmatch(strings.TrimSpace(line))
-		if m == nil {
-			continue
+	var prefixes []string
+	if abs, err := filepath.Abs(dir); err == nil {
+		prefixes = append(prefixes, strings.TrimPrefix(filepath.ToSlash(abs), "/")+"/")
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			prefixes = append(prefixes, strings.TrimPrefix(filepath.ToSlash(real), "/")+"/")
 		}
-		found = true
-		rel, inside := "", false
+	}
+	excludedEntry := func(entry string) bool {
+		if strings.Count(entry, osvCouldNotExtract) != 1 {
+			return false
+		}
+		m := osvEntry.FindStringSubmatch(entry)
+		if m == nil {
+			return false
+		}
 		for _, p := range prefixes {
-			if r, ok := strings.CutPrefix(m[1], p); ok {
-				rel, inside = r, true
-				break
+			if rel, ok := strings.CutPrefix(m[1], p); ok {
+				if strings.IndexFunc(rel, unicode.IsControl) >= 0 {
+					return false
+				}
+				return len(finding.FilterPaths([]finding.Finding{{File: rel}}, exclude)) == 0
 			}
 		}
-		if !inside || len(finding.FilterPaths([]finding.Finding{{File: rel}}, exclude)) > 0 {
+		return false
+	}
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	inBlock, entries := false, 0
+	for _, line := range lines {
+		if m := osvHeader.FindStringSubmatch(line); m != nil {
+			inBlock = true
+			if m[1] != "" {
+				entries++
+				if !excludedEntry(m[1]) {
+					return true
+				}
+			}
+			continue
+		}
+		if !inBlock {
+			if strings.Contains(line, "could not extract") {
+				return true
+			}
+			continue
+		}
+		entries++
+		if !excludedEntry(line) {
 			return true
 		}
 	}
-	// "Error during extraction" without a path we could parse.
-	return !found
+	// A header without any entry is an error we cannot attribute.
+	return !inBlock || entries == 0
 }
 
 func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {

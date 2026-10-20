@@ -15,17 +15,20 @@ import (
 	"github.com/faridlamaul/shipguard/internal/finding"
 )
 
-// OpengrepDefaultExcludes is opengrep 1.31.0's built-in default ignore list,
+// opengrepDefaultExcludes is opengrep 1.31.0's built-in default ignore list,
 // observed by scanning a tree with and without --x-ignore-semgrepignore-files.
 // shipguard passes it as --exclude (gitignore syntax: a name matches at any
 // depth) unless scanners.sast.default_excludes is false. It is fixed in code,
 // so a repository cannot change it.
-var OpengrepDefaultExcludes = []string{
+var opengrepDefaultExcludes = []string{
 	"vendor/", "build/", "dist/", "node_modules/",
 	".venv/", ".env/", ".tox/", ".npm/", ".yarn/", "_build/",
 	".hg/", ".svn/", "CVS/", "_darcs/",
 	"test/", "tests/", "*_test.go", "*.min.js",
 }
+
+// OpengrepDefaultExcludes returns a copy of the fixed default exclude list.
+func OpengrepDefaultExcludes() []string { return slices.Clone(opengrepDefaultExcludes) }
 
 type opengrep struct {
 	run          Runner
@@ -204,7 +207,7 @@ func (o *opengrep) args(t Target, output string) []string {
 		a = append(a, "--exclude", e)
 	}
 	if t.SASTDefaultExcludes {
-		for _, e := range OpengrepDefaultExcludes {
+		for _, e := range opengrepDefaultExcludes {
 			a = append(a, "--exclude", e)
 		}
 	}

@@ -429,6 +429,12 @@ func TestOSVExtractionErrorInExcludedPathIsIgnored(t *testing.T) {
 		{"not excluded", head + line("package-lock.json"), true},
 		{"outside the scan dir", head + "\tother/testdata/package-lock.json: could not extract: bad\n", true},
 		{"no parsable path", "Error during extraction: something else\n", true},
+		{"forged second line", "Error during extraction: (extracting as javascript/packagelockjson) \n├──┤" + root + "/web\n" + root + "/testdata/package-lock.json: could not extract: invalid character 'b'\n", true},
+		{"dir named like the marker", "Error during extraction: (extracting as javascript/packagelockjson) \n├──┤" + root + "/docs: could not extract/package-lock.json: could not extract: invalid character 'b'\n", true},
+		{"excluded with tree markers", "Error during extraction: (extracting as javascript/packagelockjson) \n├──┤" + root + "/testdata/package-lock.json: could not extract: bad\n└──┘" + root + "/testdata/b/package-lock.json: could not extract: bad\n", false},
+		{"stray line after the block", head + line("testdata/package-lock.json") + "Scanned something\n", true},
+		{"control character in path", head + "\t" + root + "/testdata/a\x01b/package-lock.json: could not extract: bad\n", true},
+		{"extract text before the block", "x/y: could not extract: z\n" + head + line("testdata/package-lock.json"), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -440,5 +446,19 @@ func TestOSVExtractionErrorInExcludedPathIsIgnored(t *testing.T) {
 				t.Fatalf("fs=%v err=%v", fs, err)
 			}
 		})
+	}
+}
+
+// TestOSVExtractionErrorRelativeDir: a relative Target.Dir resolves against
+// the working directory when the excluded paths are recognized.
+func TestOSVExtractionErrorRelativeDir(t *testing.T) {
+	abs := t.TempDir()
+	t.Chdir(abs)
+	stderr := "Error during extraction: (extracting as javascript/packagelockjson) " + strings.TrimPrefix(abs, "/") + "/testdata/package-lock.json: could not extract: bad\n"
+	if osvExtractionFailed([]byte(stderr), ".", []string{"testdata/"}) {
+		t.Fatal("excluded path under a relative dir must be ignored")
+	}
+	if !osvExtractionFailed([]byte(stderr), ".", nil) {
+		t.Fatal("non-excluded path must fail")
 	}
 }

@@ -258,15 +258,19 @@ func TestOpengrepDefaultExcludes(t *testing.T) {
 		}
 		want := []string{"docs/"}
 		if on {
-			want = append(want, OpengrepDefaultExcludes...)
+			want = append(want, OpengrepDefaultExcludes()...)
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("default_excludes=%v: --exclude = %v, want %v", on, got, want)
 		}
 	}
 	for _, p := range []string{"vendor/", "build/", "dist/", ".venv/", ".tox/", ".npm/", ".yarn/", "*.min.js", "test/", "tests/", "*_test.go"} {
-		if !slices.Contains(OpengrepDefaultExcludes, p) {
+		if !slices.Contains(OpengrepDefaultExcludes(), p) {
 			t.Errorf("OpengrepDefaultExcludes lacks %q", p)
 		}
+	}
+	OpengrepDefaultExcludes()[0] = "changed"
+	if OpengrepDefaultExcludes()[0] == "changed" {
+		t.Error("accessor must return a copy")
 	}
 }
