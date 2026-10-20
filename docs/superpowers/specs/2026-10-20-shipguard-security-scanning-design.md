@@ -437,3 +437,22 @@ Breaking any of them requires a major release.
   - when no scanner ran.
 - **PR diff:** fingerprints are matched as a multiset, so a second identical vulnerable snippet counts as new.
 - **opengrep rule ids:** the config-directory prefix that opengrep adds is stripped, and `disable_rules` takes bare rule ids.
+
+**A7. Policy lives only in `.shipguard.yaml` (ruling R-C2).**
+- The only policy is `.shipguard.yaml`, read from the base ref on a PR/MR. Exceptions go there, with `reason` and `expires`.
+- On every event, not only on PRs, the built-in scanners ignore the scanner-native config files, ignore files and inline suppressions that a repository can contain:
+
+| Scanner | Neutralized | How (pinned version) |
+|---|---|---|
+| gitleaks 8.30.1 | `.gitleaks.toml`, `GITLEAKS_CONFIG*`, `.gitleaksignore`, `gitleaks:allow` | `--config` with a defaults-only file (`[extend] useDefault = true`), `--gitleaks-ignore-path` set to an empty temp dir, and `--ignore-gitleaks-allow`. gitleaks always loads `<source>/.gitleaksignore`, so history scans pass the git dir as the source, and directory scans go through a random temp symlink to the work tree, whose path prefix no committed fingerprint can match. |
+| opengrep 1.31.0 | `nosem`, `nosemgrep` and `noopengrep` comments, `.semgrepignore` | `--disable-nosem` and `--x-ignore-semgrepignore-files`. This also drops opengrep's built-in default ignore list (for example `tests/`), so only `paths.exclude` and shipguard's built-in excludes apply, passed as `--exclude`. `.gitignore` cannot hide tracked files. |
+| trivy 0.76.0 | `trivy.yaml`, `.trivyignore` | `--config ""` and `--ignorefile ""` on both the config and the license scans; trivy documents the empty value as "disables loading". |
+| osv-scanner 2.7.0 | `osv-scanner.toml`, `.gitignore` hiding lockfiles | `--config` with an empty file, which overrides every per-directory config, and `--no-ignore`. |
+
+- **Consumer rules:** relative `scanners.sast.rules` paths, and absolute ones inside the repository, resolve in the base worktree on a PR, never in the PR head. A local rule path that does not exist is a config error (exit 2).
+- **Known gaps:**
+  - trivy 0.76 has no switch to disable inline `trivy:ignore:<id>` comments in IaC files, so they still apply.
+  - gitleaks' built-in default config has a global path allowlist, for example `node_modules/`, lockfiles and `vendor/modules.txt`. It is not repository-controlled, and it still applies.
+- **Related rulings:**
+  - **R-C1.** A denied license blocks regardless of `fix_available_only`, because licenses have no fix. The severity threshold still applies.
+  - **R-I3.** shipguard's built-in excludes never hide a committed secret. A history scan (PR or schedule) applies only `paths.exclude`. A directory scan also skips shipguard's run-time files: its outputs in `.shipguard/`, `.shipguard-cache/` and `.shipguard-action/`.
