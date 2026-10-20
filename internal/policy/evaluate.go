@@ -9,8 +9,6 @@ import (
 	"github.com/faridlamaul/shipguard/internal/finding"
 )
 
-const licensePrefix = "license:"
-
 // Decision is the outcome of evaluating a Result against a Config.
 type Decision struct {
 	Result        string            // "pass" | "fail" | "audit"
@@ -27,7 +25,7 @@ type Decision struct {
 func Evaluate(r finding.Result, cfg Config, pr bool, now time.Time) Decision {
 	d := Decision{Total: len(r.Findings), audit: cfg.Mode == "audit"}
 	for _, s := range r.Scanners {
-		if s.Status == "error" {
+		if s.Status == finding.RunStatusError {
 			d.ScannerErrors = append(d.ScannerErrors, s)
 		}
 	}
@@ -113,7 +111,7 @@ func blocks(f finding.Finding, cfg Config) bool {
 	if !ok {
 		return false
 	}
-	if strings.HasPrefix(f.ID, licensePrefix) && !licenseDenied(strings.TrimPrefix(f.ID, licensePrefix), cfg) {
+	if strings.HasPrefix(f.ID, finding.LicensePrefix) && !licenseDenied(strings.TrimPrefix(f.ID, finding.LicensePrefix), cfg) {
 		return false
 	}
 	switch {

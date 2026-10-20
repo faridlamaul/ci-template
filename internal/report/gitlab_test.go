@@ -36,8 +36,9 @@ func glSample() finding.Result {
 			{ID: "iac.rule", Category: finding.CategoryIaC, Severity: finding.Medium, File: "main.tf", Message: "open sg", Fingerprint: "fi1"},
 			{ID: "GHSA-xxxx-yyyy-zzzz", Aliases: []string{"CVE-2024-1"}, Category: finding.CategorySCA, Severity: finding.Critical,
 				File: "go.mod", Package: "example.com/p", Version: "1.0.0", FixedVersion: "1.0.1", Message: "bad dep", Fingerprint: "fd1"},
-			{ID: "GPL-3.0", Category: finding.CategorySCA, Severity: finding.Low, File: "go.sum", Package: "lic", Version: "2", Fingerprint: "fd2"},
-			{ID: "MIT", Category: finding.CategorySCA, Severity: finding.Info, File: "go.sum", Package: "m", Version: "1", Fingerprint: "fd3"},
+			{ID: "license:GPL-3.0", Category: finding.CategorySCA, Severity: finding.Low, File: "go.sum", Package: "lic", Version: "2", Fingerprint: "fd2"},
+			{ID: "license:MIT", Category: finding.CategorySCA, Severity: finding.Info, File: "go.sum", Package: "m", Version: "1", Fingerprint: "fd3"},
+			{ID: "MAL-2024-1", Category: finding.CategorySCA, Severity: finding.Info, File: "go.sum", Package: "mal", Version: "1", Fingerprint: "fd4"},
 		},
 	}
 }
@@ -132,8 +133,8 @@ func TestGitLabDependencyScanning(t *testing.T) {
 		t.Fatalf("analyzer %v", az)
 	}
 	vulns := doc["vulnerabilities"].([]any)
-	if len(vulns) != 2 {
-		t.Fatalf("vulns = %d, want 2 (info license omitted)", len(vulns))
+	if len(vulns) != 3 {
+		t.Fatalf("vulns = %d, want 3 (info license omitted, info MAL kept)", len(vulns))
 	}
 	v := vulns[0].(map[string]any)
 	if v["severity"] != "Critical" || v["solution"] != "Upgrade to 1.0.1" {
@@ -147,6 +148,26 @@ func TestGitLabDependencyScanning(t *testing.T) {
 	dep := loc["dependency"].(map[string]any)
 	if loc["file"] != "go.mod" || dep["version"] != "1.0.0" || dep["package"].(map[string]any)["name"] != "example.com/p" {
 		t.Fatalf("location %v", loc)
+	}
+}
+
+func TestGitLabSecretCommitSHA(t *testing.T) {
+	secret := func(r finding.Result) any {
+		dir := t.TempDir()
+		if err := WriteGitLab(dir, r, "v1", glNow); err != nil {
+			t.Fatal(err)
+		}
+		doc := glRead(t, dir, "gl-secret-detection-report.json")
+		loc := doc["vulnerabilities"].([]any)[0].(map[string]any)["location"].(map[string]any)
+		return loc["commit"].(map[string]any)["sha"]
+	}
+	r := glSample()
+	if got := secret(r); got != gitlabNoCommit {
+		t.Fatalf("no context: sha = %v", got)
+	}
+	r.Context = json.RawMessage(`{"platform":"gitlab","head_sha":"abc123"}`)
+	if got := secret(r); got != "abc123" {
+		t.Fatalf("with context: sha = %v", got)
 	}
 }
 

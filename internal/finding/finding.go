@@ -140,3 +140,6 @@ func WriteResult(path string, r Result) error {
 	}
 	return nil
 }
+
+// RunStatusError is the ScannerRun.Status of a scanner that failed.
+const RunStatusError = "error"

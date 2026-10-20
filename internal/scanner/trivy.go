@@ -134,7 +134,7 @@ func ParseTrivyLicense(raw []byte, deny []string) ([]finding.Finding, error) {
 			if file == "" {
 				file = filepath.ToSlash(res.Target)
 			}
-			id := "license:" + l.Name
+			id := finding.LicensePrefix + l.Name
 			sev := finding.Info
 			if denied[finding.LicenseKey(l.Name)] {
 				sev = finding.High

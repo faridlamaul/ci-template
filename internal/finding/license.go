@@ -14,3 +14,9 @@ func LicenseKey(spdx string) string {
 	}
 	return s
 }
+
+// LicensePrefix starts the ID of every license finding.
+const LicensePrefix = "license:"
+
+// IsLicense reports whether f is a license finding.
+func IsLicense(f Finding) bool { return strings.HasPrefix(f.ID, LicensePrefix) }

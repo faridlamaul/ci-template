@@ -172,7 +172,7 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		fs, err := s.Scan(ctx, t)
 		hr.run.DurationMS = now().Sub(start).Milliseconds()
 		if err != nil {
-			hr.run.Status, hr.run.Error = "error", err.Error()
+			hr.run.Status, hr.run.Error = finding.RunStatusError, err.Error()
 		} else {
 			hr.run.Status, hr.findings = "ok", fs
 		}
@@ -243,7 +243,7 @@ func markExisting(ctx context.Context, dir, baseSHA string, head scanner.Target,
 			}
 		}
 		if wtErr != nil {
-			hr.run.Status, hr.run.Error = "error", "base scan failed: "+wtErr.Error()
+			hr.run.Status, hr.run.Error = finding.RunStatusError, "base scan failed: "+wtErr.Error()
 			continue
 		}
 		t := head
@@ -252,7 +252,7 @@ func markExisting(ctx context.Context, dir, baseSHA string, head scanner.Target,
 		base, err := hr.s.Scan(ctx, t)
 		hr.run.DurationMS += now().Sub(start).Milliseconds()
 		if err != nil {
-			hr.run.Status, hr.run.Error = "error", "base scan failed: "+err.Error()
+			hr.run.Status, hr.run.Error = finding.RunStatusError, "base scan failed: "+err.Error()
 			continue
 		}
 		// Multiset match: a PR that adds another copy of an existing

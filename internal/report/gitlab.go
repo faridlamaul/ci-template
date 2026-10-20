@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
+	"github.com/faridlamaul/shipguard/internal/platform"
 )
 
 // gitlabSchemaVersion is the GitLab security-report-schemas tag the reports
@@ -17,7 +18,7 @@ import (
 const gitlabSchemaVersion = "15.2.5"
 
 // gitlabNoCommit is the placeholder commit sha the secret-detection schema
-// requires; shipguard findings do not carry commit information.
+// requires, used when the result context carries no head sha.
 const gitlabNoCommit = "0000000000000000000000000000000000000000"
 
 const gitlabTimeFormat = "2006-01-02T15:04:05"
@@ -106,10 +107,20 @@ func WriteGitLab(dir string, r finding.Result, version string, now time.Time) er
 	}
 	ts := now.UTC().Format(gitlabTimeFormat)
 	tool := glTool{ID: "shipguard", Name: "shipguard", Version: version, Vendor: glVendor{Name: "shipguard"}}
+	sha := gitlabNoCommit
+	if len(r.Context) > 0 {
+		var ctx platform.Context
+		if err := json.Unmarshal(r.Context, &ctx); err != nil {
+			return fmt.Errorf("decode result context: %w", err)
+		}
+		if ctx.HeadSHA != "" {
+			sha = ctx.HeadSHA
+		}
+	}
 	for _, k := range glKinds {
 		status := "success"
 		for _, s := range r.Scanners {
-			if k.covers(s.Category) && s.Status == "error" {
+			if k.covers(s.Category) && s.Status == finding.RunStatusError {
 				status = "failure"
 			}
 		}
@@ -119,10 +130,10 @@ func WriteGitLab(dir string, r finding.Result, version string, now time.Time) er
 			Vulnerabilities: []glVuln{},
 		}
 		for _, f := range r.Findings {
-			if !k.covers(f.Category) || (f.Category == finding.CategorySCA && f.Severity < finding.Low && isLicense(f)) {
+			if !k.covers(f.Category) || (finding.IsLicense(f) && f.Severity < finding.Low) {
 				continue
 			}
-			rep.Vulnerabilities = append(rep.Vulnerabilities, glVulnFor(k.scanType, f))
+			rep.Vulnerabilities = append(rep.Vulnerabilities, glVulnFor(k.scanType, f, sha))
 		}
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
@@ -138,15 +149,7 @@ func WriteGitLab(dir string, r finding.Result, version string, now time.Time) er
 	return nil
 }
 
-// isLicense reports whether an SCA finding is a license finding (no
-// vulnerability identifier prefix).
-func isLicense(f finding.Finding) bool {
-	id := strings.ToUpper(f.ID)
-	return !strings.HasPrefix(id, "CVE-") && !strings.HasPrefix(id, "GHSA-") && !strings.HasPrefix(id, "OSV-") &&
-		!strings.HasPrefix(id, "PYSEC-") && !strings.HasPrefix(id, "GO-") && !strings.HasPrefix(id, "RUSTSEC-")
-}
-
-func glVulnFor(scanType string, f finding.Finding) glVuln {
+func glVulnFor(scanType string, f finding.Finding, sha string) glVuln {
 	v := glVuln{
 		ID:          f.Fingerprint,
 		Name:        f.ID,
@@ -166,7 +169,7 @@ func glVulnFor(scanType string, f finding.Finding) glVuln {
 		}
 	case "secret_detection":
 		v.Location.StartLine = f.Line
-		v.Location.Commit = &glCommit{SHA: gitlabNoCommit}
+		v.Location.Commit = &glCommit{SHA: sha}
 	default:
 		v.Location.StartLine = f.Line
 	}
