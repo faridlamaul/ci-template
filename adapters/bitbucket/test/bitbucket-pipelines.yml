@@ -1,5 +1,6 @@
 # Test pipeline for the Bitbucket test repository (Task 20, V1-V3).
-# Copy it to the repository root together with testdata/fixtures/python/.
+# Copy it to the repository root together with testdata/fixtures/python/
+# (without expected.json).
 # __SHIPGUARD_IMAGE__ is replaced with the image under test (tag), and
 # __SHIPGUARD_IMAGE_DIGEST__ with the same image pinned by digest.
 #

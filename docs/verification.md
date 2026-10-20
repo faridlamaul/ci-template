@@ -4,13 +4,57 @@ Results of the verification items in spec §10 and §12.
 
 | # | Status |
 |---|---|
-| V1 | pending (Bitbucket access) |
-| V2 | pending (Bitbucket access) |
-| V3 | pending (Bitbucket access) |
+| V1 | done: see below |
+| V2 | done: see below |
+| V3 | done: see below |
 | V4 | done: see below |
 | V5 | done in Task 16: opengrep 1.31.0 ships musllinux x86_64 and aarch64; the image is multi-arch on Alpine |
 | V6 | done: see below |
 | V7 | done: see below |
+
+## V1: can a Bitbucket pipe use a GHCR image, pinned by tag and by digest?
+
+**Method.** The private repository `bitbucket.org/faridlamaul/shipguard-test` ran `pipe: docker://ghcr.io/faridlamaul/shipguard:0.0.0-dev` (public dev image, linux/amd64) and, in a custom pipeline, `pipe: docker://ghcr.io/faridlamaul/shipguard@sha256:fb54ae07…` on 2026-10-21.
+
+**Evidence.**
+- Pipeline 1 (tag): the runner pulled the image, and the log shows `Digest: sha256:fb54ae07…`.
+- Pipeline 2 (digest, `MODE: audit`): successful.
+
+**Result.** A pipe can use a public GHCR image by tag and by digest. No credentials are needed.
+
+**Chosen path.** The spec §10 fallback (also publishing to Docker Hub) is not needed. The docs recommend `docker://ghcr.io/faridlamaul/shipguard:vX.Y.Z@sha256:<digest>`.
+
+## V2: does `git fetch --unshallow` work inside a Bitbucket pipe?
+
+**Method.** The test pipeline sets `clone: depth: 1`, and a custom pipeline sets `SHIPGUARD_EVENT: schedule`, so shipguard has to unshallow before the full-history secrets scan.
+
+**Evidence.**
+- Pipeline 3 failed: `fatal: unable to access 'http://bitbucket.org/faridlamaul/shipguard-test/': Failed to connect to localhost:29418 over proxy localhost`. The clone script runs `git config http.${BITBUCKET_GIT_HTTP_ORIGIN}.proxy http://localhost:29418/`, and a pipe runs in its own container, so it cannot reach that address.
+- After the fix below, pipeline 7: successful with image `sha256:5e7f35c0…`. The full-history scan finished (5 findings) and the report upload raised no warning.
+
+**Result.** `git fetch --unshallow` works inside a pipe once git's proxy for the origin points at `host.docker.internal:29418`.
+
+**Chosen path.** As a pipe (`BITBUCKET_PIPE_STORAGE_DIR` is set), shipguard passes `-c http.<BITBUCKET_GIT_HTTP_ORIGIN>.proxy=http://host.docker.internal:29418/` to every git call. Users do not need `clone: depth: full`. Pull request pipelines clone the full history anyway (pipeline 6).
+
+## V3: can a pipe post Code Insights through the Pipelines proxy?
+
+**Method.** Atlassian documents `http://host.docker.internal:29418` as the proxy address for custom pipes. A local run of the image as a pipe with the old default `localhost:29418` failed with `proxyconnect tcp: dial tcp [::1]:29418: connect: connection refused`, so the default was changed to `host.docker.internal` when `BITBUCKET_PIPE_STORAGE_DIR` is set.
+
+**Evidence.**
+- The pipe container receives `--add-host=host.docker.internal:$BITBUCKET_DOCKER_HOST_INTERNAL` and `BITBUCKET_PIPE_STORAGE_DIR` (pipeline logs).
+- Commit `ae1077f` of the test repository carries a `shipguard` report (type SECURITY, reporter shipguard) posted with no token.
+
+**Result.** A pipe can post Code Insights through `http://host.docker.internal:29418` without a token.
+
+**Chosen path.** No app password or access token variable is required. `SHIPGUARD_BITBUCKET_TOKEN` stays optional, and a step image keeps using `localhost:29418`.
+
+## Bitbucket end-to-end (Task 20)
+
+| Pipeline | Event | Outcome |
+|---|---|---|
+| 1 | push to `main`, `MODE: enforce` | exit 1: 4 blocking, 5 total findings |
+| 6 | pull request 1 (adds `cleanup.py` with a command injection) | exit 1: 1 new blocking finding, 5 existing findings do not block |
+| 7 | custom `schedule` on a depth-1 clone, `MODE: audit` | exit 0: unshallowed, full-history scan, report posted |
 
 ## V4: does osv-scanner support `bun.lock`?
 
