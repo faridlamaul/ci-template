@@ -1,6 +1,6 @@
 # shipguard on GitLab
 
-> **Status: adapter in development; not yet released.** The GitLab component and templates are not built yet, and the image and version tags do not exist. This page describes the planned usage. It will be confirmed when the first release ships.
+> **Status: adapter in development; not yet released.** The job template exists in the repository (`adapters/gitlab/scan.yml`), but the image, the component and the version tags are not published yet. This page describes the planned usage. It will be confirmed when the first release ships.
 
 The adapter will be a CI/CD component that runs `shipguard run` in the shipguard image, then publishes the reports as job artifacts. `X.Y.Z` stands for the release version. GitLab tags have no `v` prefix.
 
@@ -36,8 +36,11 @@ The component and the remote URL serve the same file, rendered at release time w
 | `mode` | empty | `enforce` or `audit`. Empty uses the `mode` from `.shipguard.yaml`. |
 | `config` | `.shipguard.yaml` | Path to the config file. |
 | `image` | the release image | Image override. |
+| `stage` | `test` | Pipeline stage that runs the job. |
 
-Reports are always produced as job artifacts: `.shipguard/` (including `findings.json` and `summary.md`) and the GitLab report files.
+The job is named `shipguard`. It runs on merge request pipelines, on the default branch (unless an open merge request already runs a pipeline), on tags and on schedules. The inputs reach shipguard only through the `SHIPGUARD_SCANNERS`, `SHIPGUARD_MODE` and `SHIPGUARD_CONFIG` variables; an empty `mode` means unset, so the config file decides.
+
+Reports are always produced as job artifacts (kept 30 days, also when the job fails): `.shipguard/` (including `findings.json` and `summary.md`), the three GitLab report files and `gate.env`. The dotenv report exposes `SHIPGUARD_RESULT`, `SHIPGUARD_NEW_FINDINGS` and `SHIPGUARD_TOTAL_FINDINGS` to later jobs.
 
 ## Full history
 
@@ -48,6 +51,14 @@ Merge request pipelines are detected from `CI_PIPELINE_SOURCE=merge_request_even
 ## Policy on merge requests
 
 On a merge request the policy is read from the base, and the summary warns when the MR changes `.shipguard.yaml`. Protect the file with a CODEOWNERS entry and approval rules, and add it in its own MR before you enforce. See [Configuration](configuration.md#pull-requests-the-policy-comes-from-the-base).
+
+## Security notes
+
+- shipguard and the tools it runs inherit all job variables, including `CI_JOB_TOKEN`.
+- Protected variables are only exposed on protected refs. Fork merge request pipelines normally run in the fork project, not yours.
+- A pipeline-level variable (for example on a manual or trigger pipeline) can override `SHIPGUARD_MODE`, so restrict who can run pipelines with variables.
+- Prefer a narrow job token scope.
+- The template never interpolates inputs into `script:`; they are passed as non-expanded variables.
 
 ## Hardening
 
