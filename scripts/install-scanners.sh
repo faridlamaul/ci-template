@@ -1,7 +1,7 @@
 #!/bin/sh
 # Download the pinned scanner binaries, verify their SHA-256 and install them
 # to /usr/local/bin. Usage: install-scanners.sh <amd64|arm64>
-set -euo pipefail
+set -eu
 
 arch="${1:?usage: install-scanners.sh <amd64|arm64>}"
 here="$(cd "$(dirname "$0")" && pwd)"
