@@ -39,6 +39,9 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+      - name: Test GitLab publish script
+        run: make publish-test
+
       # Pinned, so a new govulncheck release cannot fail CI by itself.
       - name: Check vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
@@ -98,8 +101,8 @@ jobs:
 
       # Scoped to the files shipguard owns. The legacy reusable workflows
       # (go-ci, node-ci, python-ci, docker-build, go-release, semantic-release,
-      # pr-title) and release.yml have known findings that sub-project #2
-      # fixes; add them here when it does.
+      # pr-title) have known findings that sub-project #2 fixes; add them
+      # here when it does.
       - name: Audit workflows
         run: >
           docker run --rm -v "$PWD:/repo" -w /repo
@@ -110,6 +113,7 @@ jobs:
           .github/workflows/adapter-github.yml
           .github/workflows/bump-scanners.yml
           .github/workflows/dogfood.yml
+          .github/workflows/release.yml
           adapters/github
 
   actionlint:
