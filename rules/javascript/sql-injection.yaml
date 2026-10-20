@@ -1,0 +1,24 @@
+rules:
+  - id: shipguard.javascript.sql-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      The SQL statement is built with concatenation or a template literal,
+      which allows SQL injection when any part is attacker controlled. Use
+      placeholders and pass the values separately, for example
+      db.query("SELECT * FROM users WHERE id = $1", [id]).
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query(`...${$X}...`, ...)
+          - pattern: $DB.query($A + $B, ...)
+          - pattern: $DB.execute(`...${$X}...`, ...)
+          - pattern: $DB.execute($A + $B, ...)
+          - pattern: $DB.raw(`...${$X}...`, ...)
+          - pattern: $DB.raw($A + $B, ...)
+          - pattern: $DB.$queryRawUnsafe(...)
+          - pattern: $DB.$executeRawUnsafe(...)
+      - pattern-not: $DB.$M("..." + "...", ...)
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      confidence: MEDIUM

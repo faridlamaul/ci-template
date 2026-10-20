@@ -1,0 +1,20 @@
+rules:
+  - id: shipguard.javascript.eval-usage
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      eval, new Function and vm.run* execute arbitrary JavaScript
+      from a non-literal value. Parse data with JSON.parse and dispatch
+      behavior through an explicit lookup table instead of evaluating strings.
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: new Function(..., $X)
+          - pattern: vm.runInNewContext($X, ...)
+          - pattern: vm.runInThisContext($X, ...)
+      - pattern-not: eval("...")
+      - pattern-not: new Function(..., "...")
+    metadata:
+      category: security
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      confidence: MEDIUM

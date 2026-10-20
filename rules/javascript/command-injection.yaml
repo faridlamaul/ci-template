@@ -1,0 +1,27 @@
+rules:
+  - id: shipguard.javascript.command-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A shell command is built from a non-constant string, so shell
+      metacharacters in the data can run arbitrary commands. Use
+      child_process.execFile or spawn with an argument array and without
+      shell: true.
+    patterns:
+      - pattern-either:
+          - pattern: child_process.exec($CMD, ...)
+          - pattern: child_process.execSync($CMD, ...)
+          - pattern: exec($CMD, ...)
+          - pattern: execSync($CMD, ...)
+          - pattern: "child_process.spawn($CMD, $ARGS, { ..., shell: true, ... })"
+          - pattern: "spawn($CMD, $ARGS, { ..., shell: true, ... })"
+      - pattern-not: child_process.exec("...", ...)
+      - pattern-not: child_process.execSync("...", ...)
+      - pattern-not: exec("...", ...)
+      - pattern-not: execSync("...", ...)
+      - pattern-not: "spawn(\"...\", $ARGS, { ..., shell: true, ... })"
+      - pattern-not: "child_process.spawn(\"...\", $ARGS, { ..., shell: true, ... })"
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      confidence: MEDIUM

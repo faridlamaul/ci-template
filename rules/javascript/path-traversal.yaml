@@ -1,0 +1,31 @@
+rules:
+  - id: shipguard.javascript.path-traversal
+    languages: [javascript, typescript]
+    mode: taint
+    severity: ERROR
+    message: >-
+      A value from the HTTP request reaches a file system call without being
+      reduced to a safe name, so "../" sequences can read or write files
+      outside the intended directory. Use path.basename on the value, or
+      resolve the path and verify it stays inside the allowed root.
+    pattern-sources:
+      - pattern: $REQ.query.$P
+      - pattern: $REQ.params.$P
+      - pattern: $REQ.body.$P
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+    pattern-sinks:
+      - pattern: fs.readFile(...)
+      - pattern: fs.readFileSync(...)
+      - pattern: fs.createReadStream(...)
+      - pattern: fs.writeFile(...)
+      - pattern: fs.writeFileSync(...)
+      - pattern: fs.unlink(...)
+      - pattern: fs.unlinkSync(...)
+      - pattern: fs.rm(...)
+      - pattern: $RES.sendFile(...)
+      - pattern: $RES.download(...)
+    metadata:
+      category: security
+      cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      confidence: MEDIUM
