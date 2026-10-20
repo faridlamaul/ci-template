@@ -31,9 +31,33 @@ func fakeSecret() string {
 }
 
 type finding struct {
-	Category string `json:"category"`
-	ID       string `json:"id"`
-	Status   string `json:"status"`
+	Category string   `json:"category"`
+	ID       string   `json:"id"`
+	Aliases  []string `json:"aliases"`
+	File     string   `json:"file"`
+	Status   string   `json:"status"`
+}
+
+// is reports whether f is the vulnerability or rule id, under its own id or
+// one of its aliases (osv-scanner groups PYSEC/GHSA/GO ids of one advisory).
+func (f finding) is(id string) bool {
+	if f.ID == id {
+		return true
+	}
+	for _, a := range f.Aliases {
+		if a == id {
+			return true
+		}
+	}
+	return false
+}
+
+// noSecretInOutput fails the test when the container output shows secret.
+func noSecretInOutput(t *testing.T, out, secret string) {
+	t.Helper()
+	if strings.Contains(out, secret) {
+		t.Error("secret value leaked into the container stdout/stderr")
+	}
 }
 
 type pair struct {
@@ -171,8 +195,9 @@ func TestFixtureFindings(t *testing.T) {
 			commitAll(t, dir, "fixture")
 
 			out, code := shipguard(t, img, dir)
+			noSecretInOutput(t, out, secret)
 			if code != 1 {
-				t.Fatalf("exit = %d, want 1\n%s", code, out)
+				t.Fatalf("exit = %d, want 1", code)
 			}
 			got := readFindings(t, dir)
 
@@ -188,7 +213,7 @@ func TestFixtureFindings(t *testing.T) {
 			for _, w := range want {
 				found := false
 				for _, f := range got {
-					if f.Category == w.Category && (w.ID == "" || f.ID == w.ID) {
+					if f.Category == w.Category && (w.ID == "" || f.is(w.ID)) {
 						found = true
 						break
 					}
@@ -251,6 +276,73 @@ func TestPRDiffAware(t *testing.T) {
 	}
 	if existing == 0 {
 		t.Error("expected the fixture's findings to be existing")
+	}
+	// The gate blocks on the new finding only: the fixture's existing
+	// findings are above the thresholds but must not block.
+	if !strings.Contains(out, "\n1 blocking, 1 new, ") || !strings.Contains(out, "| shipguard.python.command-injection | extra.py:5 |") {
+		t.Errorf("gate summary does not show exactly one blocking (new) finding:\n%s", out)
+	}
+}
+
+// TestPRCannotSilenceScanners: a PR that adds a vulnerability, a secret and
+// the scanner-native files and comments that would hide them still fails
+// (R-C2: policy lives only in the base .shipguard.yaml).
+func TestPRCannotSilenceScanners(t *testing.T) {
+	img := image(t)
+	dir := newRepo(t, img, "python")
+	commitAll(t, dir, "base")
+	git(t, dir, "checkout", "-q", "-b", "feature")
+	secret := fakeSecret()
+	files := map[string]string{
+		"extra.py":         "import os\n\n\ndef clean(path):\n    os.system(\"rm -rf %s\" % path)  # nosemgrep\n",
+		".semgrepignore":   "extra.py\n",
+		secretFile:         "api_key = \"" + secret + "\" # gitleaks:allow\n",
+		".gitleaks.toml":   "[extend]\nuseDefault = false\n\n[[rules]]\nid = \"never\"\nregex = \"NEVER-MATCHES-ANYTHING\"\n",
+		".gitleaksignore":  secretFile + ":generic-api-key:1\n",
+		".trivyignore":     "DS-0002\nDS-0026\n",
+		"trivy.yaml":       "misconfiguration:\n  scanners: [terraform]\n",
+		"osv-scanner.toml": "[[PackageOverrides]]\necosystem = \"PyPI\"\nignore = true\nreason = \"silence\"\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	head := commitAll(t, dir, "feature")
+
+	out, code := shipguard(t, img, dir,
+		"GITHUB_ACTIONS=true", "GITHUB_EVENT_NAME=pull_request", "GITHUB_BASE_REF=main", "GITHUB_SHA="+head)
+	noSecretInOutput(t, out, secret)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	var sast, secrets bool
+	for _, f := range readFindings(t, dir) {
+		if f.Status != "new" {
+			continue
+		}
+		switch {
+		case f.Category == "sast" && f.ID == "shipguard.python.command-injection" && f.File == "extra.py":
+			sast = true
+		case f.Category == "secrets" && f.File == secretFile:
+			secrets = true
+		}
+	}
+	if !sast {
+		t.Error("nosemgrep/.semgrepignore hid the new command injection")
+	}
+	if !secrets {
+		t.Error(".gitleaks.toml/.gitleaksignore/gitleaks:allow hid the new secret")
+	}
+	// The PR's trivy.yaml, .trivyignore and osv-scanner.toml must not hide
+	// the fixture's existing findings either.
+	var iac, sca bool
+	for _, f := range readFindings(t, dir) {
+		iac = iac || (f.Category == "iac" && f.ID == "DS-0002")
+		sca = sca || (f.Category == "sca" && f.is("GHSA-6757-jp84-gxfx"))
+	}
+	if !iac || !sca {
+		t.Errorf("repo scanner config hid findings: iac DS-0002=%v, sca GHSA-6757-jp84-gxfx=%v", iac, sca)
 	}
 }
 
