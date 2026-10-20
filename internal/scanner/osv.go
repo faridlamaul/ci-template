@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
@@ -35,23 +39,8 @@ type osvReport struct {
 				Version   string `json:"version"`
 				Ecosystem string `json:"ecosystem"`
 			} `json:"package"`
-			Vulnerabilities []struct {
-				ID       string   `json:"id"`
-				Aliases  []string `json:"aliases"`
-				Affected []struct {
-					Package struct {
-						Name      string `json:"name"`
-						Ecosystem string `json:"ecosystem"`
-					} `json:"package"`
-					Ranges []struct {
-						Type   string `json:"type"`
-						Events []struct {
-							Fixed string `json:"fixed"`
-						} `json:"events"`
-					} `json:"ranges"`
-				} `json:"affected"`
-			} `json:"vulnerabilities"`
-			Groups []struct {
+			Vulnerabilities []osvVuln `json:"vulnerabilities"`
+			Groups          []struct {
 				IDs         []string `json:"ids"`
 				MaxSeverity string   `json:"max_severity"`
 			} `json:"groups"`
@@ -76,62 +65,160 @@ func osvSeverity(maxSeverity string) finding.Severity {
 	return finding.Low
 }
 
-// ParseOSV converts an osv-scanner JSON report into findings, one per
-// package and vulnerability.
+// ParseOSV converts an osv-scanner JSON report into findings: one per file,
+// package version and vulnerability (see parseOSV).
 func ParseOSV(raw []byte) ([]finding.Finding, error) { return parseOSV(raw, "") }
 
+type osvVuln struct {
+	ID       string   `json:"id"`
+	Aliases  []string `json:"aliases"`
+	Affected []struct {
+		Package struct {
+			Name      string `json:"name"`
+			Ecosystem string `json:"ecosystem"`
+		} `json:"package"`
+		Ranges []struct {
+			Type   string `json:"type"`
+			Events []struct {
+				Fixed string `json:"fixed"`
+			} `json:"events"`
+		} `json:"ranges"`
+	} `json:"affected"`
+}
+
+// parseOSV converts the report into findings without duplicates:
+//   - advisories osv-scanner groups as one vulnerability (e.g. a PYSEC and a
+//     GHSA id sharing aliases) become one finding, keeping the group's first
+//     id and the union of the other ids and aliases;
+//   - the same file, package, version and id reported twice (osv-scanner
+//     2.7.0 reports requirements.txt once as "lockfile" with version 5.3 and
+//     once as "unknown" with 5.3.0) is kept once; numeric versions that
+//     differ only by trailing ".0" components are the same version.
 func parseOSV(raw []byte, dir string) ([]finding.Finding, error) {
 	var rep osvReport
 	if err := json.Unmarshal(raw, &rep); err != nil {
 		return nil, fmt.Errorf("parse osv-scanner report: %w", err)
 	}
 	out := []finding.Finding{}
+	seen := map[string]int{} // dedupe key -> index in out
 	for _, res := range rep.Results {
 		file := relFile(res.Source.Path, dir)
 		for _, p := range res.Packages {
+			byID := make(map[string]osvVuln, len(p.Vulnerabilities))
+			for _, v := range p.Vulnerabilities {
+				byID[v.ID] = v
+			}
 			sev := map[string]string{}
+			group := map[string][]string{} // id -> ids of its group present in the report
 			for _, g := range p.Groups {
+				var ids []string
+				for _, id := range g.IDs {
+					if _, ok := byID[id]; ok {
+						ids = append(ids, id)
+					}
+				}
 				for _, id := range g.IDs {
 					sev[id] = g.MaxSeverity
+					if _, done := group[id]; !done && len(ids) > 0 {
+						group[id] = ids
+					}
 				}
 			}
+			emitted := map[string]bool{}
 			for _, v := range p.Vulnerabilities {
+				if emitted[v.ID] {
+					continue
+				}
+				ids := group[v.ID]
+				if len(ids) == 0 {
+					ids = []string{v.ID}
+				}
+				keep := ids[0]
+				var aliases []string
 				fixed := ""
-			find:
-				for _, a := range v.Affected {
-					if a.Package.Name != p.Package.Name || a.Package.Ecosystem != p.Package.Ecosystem {
-						continue
+				for _, id := range ids {
+					emitted[id] = true
+					m := byID[id]
+					if id != keep {
+						aliases = append(aliases, id)
 					}
-					for _, r := range a.Ranges {
-						if r.Type == "GIT" { // fixed holds a commit hash, not a version
-							continue
-						}
-						for _, e := range r.Events {
-							if e.Fixed != "" {
-								fixed = e.Fixed
-								break find
-							}
-						}
+					aliases = append(aliases, m.Aliases...)
+					if fixed == "" {
+						fixed = osvFixed(m, p.Package.Name, p.Package.Ecosystem)
 					}
 				}
-				out = append(out, finding.Finding{
-					ID:           v.ID,
-					Aliases:      v.Aliases,
+				f := finding.Finding{
+					ID:           keep,
+					Aliases:      mergeAliases(nil, aliases, keep),
 					Scanner:      "osv-scanner",
 					Category:     finding.CategorySCA,
-					Severity:     osvSeverity(sev[v.ID]),
+					Severity:     osvSeverity(sev[keep]),
 					File:         file,
-					Message:      fmt.Sprintf("%s@%s is affected by %s", p.Package.Name, p.Package.Version, v.ID),
+					Message:      fmt.Sprintf("%s@%s is affected by %s", p.Package.Name, p.Package.Version, keep),
 					Package:      p.Package.Name,
 					Version:      p.Package.Version,
 					FixedVersion: fixed,
 					FixAvailable: fixed != "",
-					Fingerprint:  finding.Fingerprint(v.ID, file, p.Package.Name+"@"+p.Package.Version),
-				})
+					Fingerprint:  finding.Fingerprint(keep, file, p.Package.Name+"@"+p.Package.Version),
+				}
+				key := strings.Join([]string{file, p.Package.Ecosystem, p.Package.Name, normVersion(p.Package.Version), keep}, "\x00")
+				if i, ok := seen[key]; ok {
+					out[i].Aliases = mergeAliases(out[i].Aliases, f.Aliases, keep)
+					continue
+				}
+				seen[key] = len(out)
+				out = append(out, f)
 			}
 		}
 	}
 	return out, nil
+}
+
+// osvFixed returns the first fixed version for the package, ignoring GIT
+// ranges, whose "fixed" holds a commit hash.
+func osvFixed(v osvVuln, name, ecosystem string) string {
+	for _, a := range v.Affected {
+		if a.Package.Name != name || a.Package.Ecosystem != ecosystem {
+			continue
+		}
+		for _, r := range a.Ranges {
+			if r.Type == "GIT" {
+				continue
+			}
+			for _, e := range r.Events {
+				if e.Fixed != "" {
+					return e.Fixed
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// mergeAliases returns the sorted union of a and b without self.
+func mergeAliases(a, b []string, self string) []string {
+	var out []string
+	for _, x := range append(slices.Clone(a), b...) {
+		if x != self && !slices.Contains(out, x) {
+			out = append(out, x)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+var numericVersion = regexp.MustCompile(`^[0-9]+(\.[0-9]+)*$`)
+
+// normVersion drops trailing ".0" components of a numeric version, so 5.3
+// and 5.3.0 compare equal; other versions are returned unchanged.
+func normVersion(v string) string {
+	if !numericVersion.MatchString(v) {
+		return v
+	}
+	for strings.HasSuffix(v, ".0") {
+		v = strings.TrimSuffix(v, ".0")
+	}
+	return v
 }
 
 func (o *osv) args(output string) []string {

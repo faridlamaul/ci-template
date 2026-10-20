@@ -42,8 +42,9 @@ func TestParseOSVFixAvailable(t *testing.T) {
 			t.Fatalf("unexpected finding %+v", f)
 		}
 	}
-	if len(fs) != 6 {
-		t.Fatalf("want 6 findings (package x vulnerability), got %d", len(fs))
+	// Six advisories in three alias groups: one finding per group.
+	if len(fs) != 3 {
+		t.Fatalf("want 3 findings (package x alias group), got %d: %+v", len(fs), fs)
 	}
 	fixed := byID["PYSEC-2018-66"]
 	if fixed.Package != "flask" || fixed.Version != "0.12.2" || fixed.FixedVersion != "0.12.3" || !fixed.FixAvailable ||
@@ -51,13 +52,57 @@ func TestParseOSVFixAvailable(t *testing.T) {
 		fixed.Fingerprint != finding.Fingerprint("PYSEC-2018-66", "requirements.txt", "flask@0.12.2") {
 		t.Fatalf("fixed finding %+v", fixed)
 	}
-	unfixed := byID["GHSA-6528-wvf6-f6qg"]
-	if unfixed.Package != "pycrypto" || unfixed.FixedVersion != "" || unfixed.FixAvailable || unfixed.Severity != finding.High {
+	unfixed := byID["PYSEC-2018-97"]
+	if unfixed.Package != "pycrypto" || unfixed.FixedVersion != "" || unfixed.FixAvailable || unfixed.Severity != finding.High ||
+		!reflect.DeepEqual(unfixed.Aliases, []string{"CVE-2018-6594", "GHSA-6528-wvf6-f6qg"}) {
 		t.Fatalf("unfixed finding %+v", unfixed)
 	}
 	// A git-commit "fixed" event in a GIT range is not a fixed version.
 	if g := byID["PYSEC-2017-94"]; g.FixedVersion != "" || g.FixAvailable || g.Severity != finding.Critical {
 		t.Fatalf("git range finding %+v", g)
+	}
+}
+
+// TestParseOSVDedupesReal270 uses osv-scanner 2.7.0 output for
+// requirements.txt "PyYAML==5.3": the file is reported twice (type lockfile,
+// version 5.3, and type unknown, version 5.3.0), each with a PYSEC and a GHSA
+// advisory per vulnerability.
+func TestParseOSVDedupesReal270(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "osv", "python-dup-2.7.0.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs, err := parseOSV(b, "/src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"PYSEC-2020-96":  {"CVE-2020-1747", "GHSA-6757-jp84-gxfx"},
+		"PYSEC-2021-142": {"CVE-2020-14343", "GHSA-8q59-q68h-6hv4"},
+	}
+	if len(fs) != len(want) {
+		t.Fatalf("got %d findings, want %d: %+v", len(fs), len(want), fs)
+	}
+	for _, f := range fs {
+		if !reflect.DeepEqual(f.Aliases, want[f.ID]) || f.File != "requirements.txt" || f.Package != "pyyaml" ||
+			f.Version != "5.3" || f.Severity != finding.Critical {
+			t.Errorf("finding %+v; want aliases %v", f, want[f.ID])
+		}
+	}
+}
+
+func TestParseOSVDedupeKeepsDistinctVersions(t *testing.T) {
+	raw := `{"results":[{"source":{"path":"package-lock.json"},"packages":[
+	 {"package":{"name":"a","version":"1.0.0","ecosystem":"npm"},"vulnerabilities":[{"id":"V1"}]},
+	 {"package":{"name":"a","version":"1.0","ecosystem":"npm"},"vulnerabilities":[{"id":"V1","aliases":["CVE-1"]}]},
+	 {"package":{"name":"a","version":"1.1.0","ecosystem":"npm"},"vulnerabilities":[{"id":"V1"}]}]}]}`
+	fs, err := parseOSV([]byte(raw), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) != 2 || fs[0].Version != "1.0.0" || fs[1].Version != "1.1.0" ||
+		!reflect.DeepEqual(fs[0].Aliases, []string{"CVE-1"}) {
+		t.Fatalf("got %+v", fs)
 	}
 }
 
@@ -195,7 +240,7 @@ func TestOSVExit1WithFindings(t *testing.T) {
 	calls := 0
 	s := NewOSV(osvRunner(t, osvGolden(t), 1, &calls, &args))
 	fs, err := s.Scan(context.Background(), Target{Dir: dir, RawDir: raw})
-	if err != nil || len(fs) != 6 || calls != 1 {
+	if err != nil || len(fs) != 3 || calls != 1 {
 		t.Fatalf("fs=%d err=%v calls=%d", len(fs), err, calls)
 	}
 	if args[0] != "osv-scanner" || !reflect.DeepEqual(args[1:6], []string{"scan", "source", "-r", "--format", "json"}) ||
@@ -244,7 +289,7 @@ func TestOSVRetriesRunnerErrorThenSucceeds(t *testing.T) {
 		return osvRunner(t, golden, 1, nil, nil)(ctx, dir, name, args...)
 	}
 	fs, err := NewOSV(run).Scan(context.Background(), Target{Dir: "/src", RawDir: t.TempDir()})
-	if err != nil || len(fs) != 6 || calls != 3 || len(sleeps) != 2 {
+	if err != nil || len(fs) != 3 || calls != 3 || len(sleeps) != 2 {
 		t.Fatalf("fs=%d err=%v calls=%d sleeps=%v", len(fs), err, calls, sleeps)
 	}
 }
