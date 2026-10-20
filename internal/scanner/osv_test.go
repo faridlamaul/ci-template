@@ -412,53 +412,40 @@ func TestOSVPassesDirectoryExcludes(t *testing.T) {
 	}
 }
 
-func TestOSVExtractionErrorInExcludedPathIsIgnored(t *testing.T) {
+// TestOSVExtractionErrorAlwaysFails: stderr path text is repository-controlled
+// (newlines are legal in names), so no extraction error is ever ignored and the error carries no stderr text.
+func TestOSVExtractionErrorAlwaysFails(t *testing.T) {
 	noSleep(t)
 	dir := t.TempDir()
 	root := strings.TrimPrefix(dir, "/")
-	line := func(p string) string { return "\t" + root + "/" + p + ": could not extract: invalid character 'b'\n" }
-	head := "Scanning dir .\nError during extraction: (extracting as javascript/packagelockjson)\n"
-	ex := []string{"testdata/", "**/fixtures/**"}
-	cases := []struct {
-		name, stderr string
-		wantErr      bool
-	}{
-		{"excluded only", head + line("testdata/package-lock.json") + line("a/fixtures/x/package-lock.json"), false},
-		{"excluded on the header line", "Error during extraction: (extracting as javascript/packagelockjson) " + root + "/testdata/package-lock.json: could not extract: bad\n", false},
-		{"one not excluded", head + line("testdata/package-lock.json") + line("web/package-lock.json"), true},
-		{"not excluded", head + line("package-lock.json"), true},
-		{"outside the scan dir", head + "\tother/testdata/package-lock.json: could not extract: bad\n", true},
-		{"no parsable path", "Error during extraction: something else\n", true},
-		{"forged second line", "Error during extraction: (extracting as javascript/packagelockjson) \n├──┤" + root + "/web\n" + root + "/testdata/package-lock.json: could not extract: invalid character 'b'\n", true},
-		{"dir named like the marker", "Error during extraction: (extracting as javascript/packagelockjson) \n├──┤" + root + "/docs: could not extract/package-lock.json: could not extract: invalid character 'b'\n", true},
-		{"excluded with tree markers", "Error during extraction: (extracting as javascript/packagelockjson) \n├──┤" + root + "/testdata/package-lock.json: could not extract: bad\n└──┘" + root + "/testdata/b/package-lock.json: could not extract: bad\n", false},
-		{"stray line after the block", head + line("testdata/package-lock.json") + "Scanned something\n", true},
-		{"control character in path", head + "\t" + root + "/testdata/a\x01b/package-lock.json: could not extract: bad\n", true},
-		{"extract text before the block", "x/y: could not extract: z\n" + head + line("testdata/package-lock.json"), true},
+	head := "Error during extraction: (extracting as javascript/packagelockjson) \n"
+	cases := map[string]string{
+		"real forged two-line":      head + "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4" + root + "/web\n" + root + "/testdata/package-lock.json: could not extract: invalid character 'b'\n",
+		"dir named like the marker": head + root + "/docs: could not extract/package-lock.json: could not extract: bad\n",
+		"forged web/* lines":        head + root + "/web/a: could not extract: x\n" + root + "/web/tmp/package-lock.json: could not extract: bad\n",
+		"excluded looking path":     head + "\t" + root + "/testdata/package-lock.json: could not extract: bad\n",
+		"header only":               "Error during extraction: something else\n",
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			fs, err := NewOSV(osvExtractionRunner(t, c.stderr, nil)).Scan(context.Background(), Target{Dir: dir, RawDir: t.TempDir(), Exclude: ex})
-			if (err != nil) != c.wantErr {
-				t.Fatalf("err = %v, wantErr %v", err, c.wantErr)
-			}
-			if err != nil && (fs != nil || strings.Contains(err.Error(), "package-lock") || strings.Contains(err.Error(), "invalid character")) {
-				t.Fatalf("fs=%v err=%v", fs, err)
-			}
-		})
+	for name, stderr := range cases {
+		{
+			t.Run(name, func(t *testing.T) {
+				fs, err := NewOSV(osvExtractionRunner(t, stderr, nil)).Scan(context.Background(), Target{
+					Dir: dir, RawDir: t.TempDir(), Exclude: []string{"testdata/", "web/*", "**/web/**"}})
+				if err == nil || fs != nil || strings.Contains(err.Error(), "package-lock") || strings.Contains(err.Error(), root) {
+					t.Fatalf("fs=%v err=%v", fs, err)
+				}
+			})
+		}
 	}
 }
 
-// TestOSVExtractionErrorRelativeDir: a relative Target.Dir resolves against
-// the working directory when the excluded paths are recognized.
-func TestOSVExtractionErrorRelativeDir(t *testing.T) {
-	abs := t.TempDir()
-	t.Chdir(abs)
-	stderr := "Error during extraction: (extracting as javascript/packagelockjson) " + strings.TrimPrefix(abs, "/") + "/testdata/package-lock.json: could not extract: bad\n"
-	if osvExtractionFailed([]byte(stderr), ".", []string{"testdata/"}) {
-		t.Fatal("excluded path under a relative dir must be ignored")
-	}
-	if !osvExtractionFailed([]byte(stderr), ".", nil) {
-		t.Fatal("non-excluded path must fail")
+// TestOSVExcludedDirIsNotWalked: an excluded directory is handed to osv-scanner
+// as --x-exclude, so no extraction error comes from it and a clean run passes.
+func TestOSVExcludedDirIsNotWalked(t *testing.T) {
+	var args []string
+	fs, err := NewOSV(osvExtractionRunner(t, "Scanning dir .\n", &args)).Scan(context.Background(), Target{
+		Dir: t.TempDir(), RawDir: t.TempDir(), Exclude: []string{"testdata/"}})
+	if err != nil || len(fs) != 0 || !reflect.DeepEqual(args[len(args)-3:], []string{"--x-exclude", "testdata", "."}) {
+		t.Fatalf("fs=%v err=%v args=%v", fs, err, args)
 	}
 }

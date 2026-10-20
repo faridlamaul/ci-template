@@ -215,7 +215,7 @@ func (o *opengrep) args(t Target, output string) []string {
 	// comments and .semgrepignore files in the repository are not honoured.
 	// --x-ignore-semgrepignore-files is opengrep's (v1.31.0) only switch for
 	// that; it also drops opengrep's built-in default ignore list, which
-	// OpengrepDefaultExcludes restores (scanners.sast.default_excludes).
+	// opengrepDefaultExcludes restores (scanners.sast.default_excludes).
 	// .gitignore cannot hide tracked files.
 	a = append(a, "--disable-nosem", "--x-ignore-semgrepignore-files")
 	// opengrep has no --metrics flag (v1.31.0) and sends no telemetry.

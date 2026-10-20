@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
 )
@@ -229,11 +229,12 @@ func normVersion(v string) string {
 const osvConfig = ""
 
 // osvExcludes returns the --x-exclude values for the directory-shaped
-// excludes (osv-scanner 2.7.0). A plain value is a directory path relative to
-// the scan root, matched exactly. A "g:" glob is matched against the path
-// from the filesystem root, so a rooted glob cannot be written: a "**/X/**"
-// exclude becomes "g:**/X" and any other glob is left to the findings filter.
-// File-shaped excludes are left to the findings filter too.
+// excludes (osv-scanner 2.7.0): "dir/" becomes the plain value "dir" (a path
+// relative to the scan root, matched exactly) and "**/X/**" becomes "g:**/X"
+// ("g:" globs are matched against the path from the filesystem root, so rooted
+// globs cannot be written). Every other form (file names, "web/*", rooted
+// globs) only filters the findings after the scan: osv-scanner still reads
+// those files, and an unreadable lockfile there fails the scan.
 func osvExcludes(exclude []string) []string {
 	var out []string
 	for _, e := range exclude {
@@ -271,82 +272,14 @@ func (o *osv) args(output, config string, exclude []string) []string {
 	return append(a, ".")
 }
 
-var (
-	osvHeader = regexp.MustCompile(`^Error during extraction: \([^)]*\)\s*(.*)$`)
-	// osvEntry is one failed file: an optional tree marker (osv-scanner prints a
-	// tab or a box-drawing marker), the path from the filesystem root, and the
-	// reason.
-	osvEntry = regexp.MustCompile(`^(?:\s+|[├└]──[┤┘])?(.+): could not extract: .*$`)
-)
-
-const osvCouldNotExtract = ": could not extract"
-
 // osvExtractionFailed reports whether osv-scanner could not parse a manifest
-// or lockfile outside the excluded paths. It says so only on stderr and still
-// exits 0, 1 or 128. Failures in excluded paths are ignored.
-//
-// osv-scanner prints repository paths raw, so a directory name with a newline
-// can forge lines. It fails closed: from the first header on, every line must
-// be a header or a well-formed "<dir prefix><rel>: could not extract: ..."
-// entry, with exactly one ": could not extract" and no control characters in
-// rel, and each rel must be excluded.
-func osvExtractionFailed(stderr []byte, dir string, exclude []string) bool {
-	text := string(stderr)
-	if !strings.Contains(text, "Error during extraction") && !strings.Contains(text, "could not extract") {
-		return false
-	}
-	// osv-scanner walks from "/", so it prints paths without the leading slash.
-	var prefixes []string
-	if abs, err := filepath.Abs(dir); err == nil {
-		prefixes = append(prefixes, strings.TrimPrefix(filepath.ToSlash(abs), "/")+"/")
-		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			prefixes = append(prefixes, strings.TrimPrefix(filepath.ToSlash(real), "/")+"/")
-		}
-	}
-	excludedEntry := func(entry string) bool {
-		if strings.Count(entry, osvCouldNotExtract) != 1 {
-			return false
-		}
-		m := osvEntry.FindStringSubmatch(entry)
-		if m == nil {
-			return false
-		}
-		for _, p := range prefixes {
-			if rel, ok := strings.CutPrefix(m[1], p); ok {
-				if strings.IndexFunc(rel, unicode.IsControl) >= 0 {
-					return false
-				}
-				return len(finding.FilterPaths([]finding.Finding{{File: rel}}, exclude)) == 0
-			}
-		}
-		return false
-	}
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	inBlock, entries := false, 0
-	for _, line := range lines {
-		if m := osvHeader.FindStringSubmatch(line); m != nil {
-			inBlock = true
-			if m[1] != "" {
-				entries++
-				if !excludedEntry(m[1]) {
-					return true
-				}
-			}
-			continue
-		}
-		if !inBlock {
-			if strings.Contains(line, "could not extract") {
-				return true
-			}
-			continue
-		}
-		entries++
-		if !excludedEntry(line) {
-			return true
-		}
-	}
-	// A header without any entry is an error we cannot attribute.
-	return !inBlock || entries == 0
+// or lockfile. It says so only on stderr and still exits 0, 1 or 128. Any such
+// error fails the scan: the stderr path text comes from the repository (raw,
+// with newlines allowed), so it is never used to decide that an error is
+// harmless. Excluded directories are not walked at all (--x-exclude), so an
+// error cannot legitimately come from them.
+func osvExtractionFailed(stderr []byte) bool {
+	return bytes.Contains(stderr, []byte("Error during extraction")) || bytes.Contains(stderr, []byte("could not extract"))
 }
 
 func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
@@ -380,7 +313,7 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 		switch code {
 		case 0, 1, 128:
 			// Deterministic, so not retried.
-			extractFailed = osvExtractionFailed(stderr, t.Dir, t.Exclude)
+			extractFailed = osvExtractionFailed(stderr)
 			noPackages = code == 128
 			return nil
 		}
@@ -390,7 +323,7 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 		return nil, err
 	}
 	if extractFailed {
-		return nil, errors.New("osv-scanner could not extract one or more manifests or lockfiles; fix them or add their directory to paths.exclude")
+		return nil, errors.New("osv-scanner could not extract one or more lockfiles; fix them, or exclude their directory in paths.exclude (directory entries ending in / or **/name/**)")
 	}
 
 	fs := []finding.Finding{}
