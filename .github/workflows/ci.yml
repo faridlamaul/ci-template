@@ -126,10 +126,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # Scoped to the files shipguard owns. The legacy reusable workflows
-      # (go-ci, node-ci, python-ci, docker-build, go-release, semantic-release,
-      # pr-title) have known findings that sub-project #2 fixes; add them
-      # here when it does.
+      # Scoped to the files shipguard owns plus the secured legacy workflows.
+      # docker-build, go-release, semantic-release and pr-title still have
+      # known findings; add them here when they are fixed.
       - name: Audit workflows
         run: >
           docker run --rm -v "$PWD:/repo" -w /repo
@@ -143,6 +142,9 @@ jobs:
           .github/workflows/bump-scanners.yml
           .github/workflows/dogfood.yml
           .github/workflows/release.yml
+          .github/workflows/go-ci.yml
+          .github/workflows/node-ci.yml
+          .github/workflows/python-ci.yml
           adapters/github
 
   actionlint:

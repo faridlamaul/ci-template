@@ -29,12 +29,36 @@ on:
         default: true
         required: false
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
+      - name: Deprecation notice
+        run: echo "::warning title=Deprecated::node-ci is deprecated; use faridlamaul/shipguard/.github/workflows/build-test.yml (see docs/ci.md). It will be removed in the next major release."
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate package manager
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package_manager }}
+        run: |
+          case "$PACKAGE_MANAGER" in
+            npm|pnpm|yarn) ;;
+            bun) echo "::error::bun is supported by build-test.yml (see docs/ci.md)"; exit 1 ;;
+            *) echo "::error::unsupported package_manager '$PACKAGE_MANAGER'"; exit 1 ;;
+          esac
+
+      - name: Enable corepack
+        if: inputs.package_manager == 'pnpm' || inputs.package_manager == 'yarn'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package_manager }}
+        run: corepack enable "$PACKAGE_MANAGER"
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -43,10 +67,12 @@ jobs:
           cache: ${{ inputs.package_manager == 'pnpm' && 'pnpm' || inputs.package_manager == 'yarn' && 'yarn' || 'npm' }}
 
       - name: Install dependencies
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package_manager }}
         run: |
-          if [ "${{ inputs.package_manager }}" = "pnpm" ]; then
-            npx pnpm install --frozen-lockfile
-          elif [ "${{ inputs.package_manager }}" = "yarn" ]; then
+          if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+            pnpm install --frozen-lockfile
+          elif [ "$PACKAGE_MANAGER" = "yarn" ]; then
             yarn install --frozen-lockfile
           else
             npm ci
@@ -55,7 +81,7 @@ jobs:
       - name: Run linter
         if: inputs.run_lint
         run: |
-          if npm run | grep -q "lint"; then
+          if node -e 'process.exit(Object.keys(require("./package.json").scripts || {}).includes("lint") ? 0 : 1)'; then
             npm run lint
           else
             echo "No lint script defined in package.json, skipping."
@@ -64,8 +90,8 @@ jobs:
       - name: Run tests
         if: inputs.run_tests
         run: |
-          if npm run | grep -q "test"; then
-            npm test
+          if node -e 'process.exit(Object.keys(require("./package.json").scripts || {}).includes("test") ? 0 : 1)'; then
+            npm run test
           else
             echo "No test script defined in package.json, skipping."
           fi
@@ -73,7 +99,7 @@ jobs:
       - name: Run build
         if: inputs.run_build
         run: |
-          if npm run | grep -q "build"; then
+          if node -e 'process.exit(Object.keys(require("./package.json").scripts || {}).includes("build") ? 0 : 1)'; then
             npm run build
           else
             echo "No build script defined in package.json, skipping."
