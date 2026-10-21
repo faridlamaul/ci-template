@@ -79,7 +79,7 @@ func (Go) Detect(dir string, _ map[string]string) (ci.Detection, error) {
 	if err != nil {
 		return ci.Detection{}, err
 	}
-	if v := strings.TrimPrefix(m.toolchain, "go"); m.toolchain != "" && v != "" {
+	if v := strings.TrimPrefix(m.toolchain, "go"); strings.HasPrefix(m.toolchain, "go") && v != "" {
 		return ci.Detection{Language: "go", Version: v, Source: "go.mod"}, nil
 	}
 	if m.goVer != "" {
@@ -117,21 +117,21 @@ func (Go) Steps(ctx context.Context, env ci.Env, _ ci.Detection, cfg policy.CICo
 			steps = append(steps, s)
 			return nil
 		}
-		s.JUnit, s.Coverage = junit, cov
-		if len(sc.JUnit) > 0 {
-			s.JUnit = sc.JUnit
-		}
-		if sc.Coverage != "" {
-			s.Coverage = sc.Coverage
-		}
 		if sc.Run != "" {
 			s.Cmds = []ci.Cmd{{Shell: sc.Run}}
 		} else {
+			s.JUnit, s.Coverage = junit, cov
 			cmds, err := def()
 			if err != nil {
 				return err
 			}
 			s.Cmds, s.After = cmds, after
+		}
+		if len(sc.JUnit) > 0 {
+			s.JUnit = sc.JUnit
+		}
+		if sc.Coverage != "" {
+			s.Coverage = sc.Coverage
 		}
 		steps = append(steps, s)
 		return nil

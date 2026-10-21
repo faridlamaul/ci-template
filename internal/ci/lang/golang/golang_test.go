@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"os"
 	"path/filepath"
@@ -32,6 +33,8 @@ func TestGoVersionFromGoMod(t *testing.T) {
 		{"toolchain", "module m\n\ngo 1.27\n\ntoolchain go1.27.2\n", "1.27.2", "go.mod", ""},
 		{"go only", "module m\n\ngo 1.27\n", "1.27", "go.mod", ""},
 		{"go with patch", "module m\n\ngo 1.27.1\n", "1.27.1", "go.mod", ""},
+		{"toolchain default", "module m\n\ngo 1.27\n\ntoolchain default\n", "1.27", "go.mod", ""},
+		{"toolchain local", "module m\n\ngo 1.27.1\n\ntoolchain local\n", "1.27.1", "go.mod", ""},
 		{"missing go", "module m\n", "", "default", "go.mod has no go directive"},
 		{"malformed", "module m\n\ngo\n", "", "", "go.mod"},
 	}
@@ -130,6 +133,11 @@ func TestOverrideGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	golden(t, "steps-override.golden.json", marshal(t, steps))
+	for _, s := range steps {
+		if s.Name == "test" && (s.After != nil || len(s.JUnit) != 1 || s.JUnit[0] != "j/*.xml" || s.Coverage != "c.xml") {
+			t.Fatalf("test step = %+v", s)
+		}
+	}
 	if len(called) != 0 {
 		t.Fatalf("tools fetched: %v", called)
 	}
@@ -154,15 +162,58 @@ func TestCoverToCobertura(t *testing.T) {
 
 func TestAfterMissingProfile(t *testing.T) {
 	dir := t.TempDir()
-	steps, _ := Go{}.Steps(context.Background(), fakeEnv(dir), ci.Detection{}, policy.CIConfig{})
+	s := testStep(t, dir)
+	if err := s.After(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".shipguard/ci/coverage.xml")); err == nil {
+		t.Fatal("coverage written")
+	}
+}
+
+func testStep(t *testing.T, dir string) ci.Step {
+	t.Helper()
+	steps, err := Go{}.Steps(context.Background(), fakeEnv(dir), ci.Detection{}, policy.CIConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, s := range steps {
 		if s.Name == "test" {
-			if err := s.After(context.Background(), dir); err != nil {
-				t.Fatal(err)
+			if s.After == nil {
+				t.Fatal("test step has no After")
 			}
-			if _, err := os.Stat(filepath.Join(dir, ".shipguard/ci/coverage.xml")); err == nil {
-				t.Fatal("coverage written")
-			}
+			return s
 		}
+	}
+	t.Fatal("no test step")
+	return ci.Step{}
+}
+
+func TestAfterWritesCoverage(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".shipguard/ci"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for src, dst := range map[string]string{"go.mod": "go.mod", "cover.out": ".shipguard/ci/cover.out"} {
+		b, err := os.ReadFile(filepath.Join("testdata", "cover", src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, dst), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := testStep(t, dir).After(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".shipguard/ci/coverage.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		LinesValid int `xml:"lines-valid,attr"`
+	}
+	if err := xml.Unmarshal(b, &v); err != nil || v.LinesValid != 8 {
+		t.Fatalf("parse: %v lines-valid=%d", err, v.LinesValid)
 	}
 }
