@@ -2,7 +2,7 @@
 
 `shipguard ci` installs dependencies, then lints, tests and builds a project in CI, and writes the reports each platform can show. One language per repository; `dir` selects a subdirectory. Monorepos and multi-version matrices are out of scope.
 
-Supported languages: Go, Node.js, Python, Ruby and Rust. The language and toolchain version are detected from the repository files; every default is pinned and every step can be overridden.
+Supported languages: Go, Node.js, Python, Ruby and Rust. The language and toolchain version are detected from the repository files; the defaults are opinionated and every step can be overridden. Tools that shipguard downloads are pinned and hash-verified (see Security).
 
 ## Command
 
@@ -22,7 +22,7 @@ shipguard ci detect --format json
 | `--language` | `SHIPGUARD_LANGUAGE` | Language (`go`, `golang`, `node`, `python`, `ruby`, `rust`). Overrides `ci.language`. |
 | `--toolchain` | `SHIPGUARD_TOOLCHAIN` | Toolchain version. Overrides `ci.version`. |
 
-The pinned tools are Linux binaries. Outside Linux only steps with your own `run` command work.
+The pinned tools are Linux binaries. Outside Linux, every step that uses a pinned tool needs a `run` override or `enabled: false`; the npm, pnpm and yarn Node steps need none.
 
 ### Exit codes
 
@@ -48,7 +48,7 @@ A missing lockfile is exit 2. A step that does not apply is skipped with a reaso
 
 Notes:
 
-- Cargo commands add `--locked` when `Cargo.lock` exists.
+- `cargo fetch`, `clippy`, `test` and `build` add `--locked` when `Cargo.lock` exists; `cargo fmt` does not.
 - Node reads the `scripts` keys of `package.json` by exact name (no substring matching). Exactly one lockfile must exist, and a `packageManager` field that names another manager is an error. Set `packageManager` (for example `pnpm@9.15.0`) for pnpm and yarn so corepack uses the version you expect; the pinned bun version comes from `ci-tools.env`. Node, Ruby and Rust steps produce JUnit and coverage only from the paths you give in `ci.steps.<step>.junit` and `.coverage`, except the Rust test step, which finds nextest's JUnit itself.
 - Python runs every uv command with `UV_PYTHON=python3` and `UV_PYTHON_DOWNLOADS=never`, so it uses the interpreter of the job image or setup action and never downloads one. `requires-python` is read from the `[project]` table with a simple reader that understands single-line strings and the operators `>= > <= < == ~=`.
 - Go with golangci-lint v2 needs a v2 `.golangci.yml`; see the [migration guide](https://golangci-lint.run/docs/product/migration-guide/).
@@ -148,7 +148,7 @@ jobs:
           steps: "lint test"
 ```
 
-Inputs: `dir`, `language`, `version`, `steps`, `config` and `shipguard-version`. Pinned at a version tag, the action downloads that release's archive and verifies `checksums.txt` with cosign and the archive against its entry in the file before running it. Pinned by full commit SHA (`@<sha> # vX.Y.Z`), it builds the binary from its own source with `actions/setup-go` instead: exact, but slower. The action then runs `shipguard ci detect`, sets up the toolchain (`actions/setup-go`, `setup-node`, `setup-python`, `ruby/setup-ruby`, or rustup with clippy and rustfmt), runs `shipguard ci` and uploads the results.
+Inputs: `dir`, `language`, `version`, `steps`, `config` and `shipguard-version`. Node ranges from `engines.node` (`>=18`, `^20`, `>=18 <21`) work on GitHub: the version is passed unchanged to `actions/setup-node`. Pinned at a version tag, the action downloads that release's archive and verifies `checksums.txt` with cosign and the archive against its entry in the file before running it. Pinned by full commit SHA (`@<sha> # vX.Y.Z`), it builds the binary from its own source with `actions/setup-go` instead: exact, but slower. The action then runs `shipguard ci detect`, sets up the toolchain (`actions/setup-go`, `setup-node`, `setup-python`, `ruby/setup-ruby`, or rustup with clippy and rustfmt), runs `shipguard ci` and uploads the results.
 
 ## GitLab
 
@@ -172,7 +172,15 @@ include:
 | `config` | `.shipguard.yaml` | Config file. |
 | `stage` | `test` | Stage of the job. |
 
-The job downloads the release binary and checks its SHA-256, rendered into the template at release time, before extracting it. If the repository's version files name a different toolchain than the image, `shipguard ci` prints a warning; a different language is exit 2. The job publishes the JUnit and Cobertura reports and the `coverage:` percentage described above. `-slim` and `-alpine` images lack `curl`; install it first (`apt-get update && apt-get install -y curl ca-certificates`).
+The job downloads the release binary and checks its SHA-256, rendered into the template at release time, before extracting it. If the repository's version files name a different toolchain than the image, `shipguard ci` prints a warning; a different language is exit 2. The job publishes the JUnit and Cobertura reports and the `coverage:` percentage described above. The version comes from the image tag on GitLab and from the step image on Bitbucket, not from ranges in repository files. `-slim` and `-alpine` images lack `curl`; install it first (`apt-get update && apt-get install -y curl ca-certificates` on Debian, `apk add --no-cache curl ca-certificates` on Alpine). The component has no pre-step input, so extend its job:
+
+```yaml
+shipguard-ci:
+  before_script:
+    - apk add --no-cache curl ca-certificates
+```
+
+A job in your `.gitlab-ci.yml` with the same name is merged into the component's job.
 
 ## Bitbucket
 
@@ -199,7 +207,7 @@ Test reports appear on their own: `shipguard ci` writes `test-results/junit.xml`
 
 ## Security
 
-- Pinned tools are downloaded over HTTPS only, verified against the SHA-256 in `ci-tools.env` before they run, and cached by version and hash in `.shipguard-cache/tools/`.
+- The tools in [`ci-tools.env`](../internal/ci/tools/ci-tools.env) (golangci-lint, gotestsum, ruff, uv, cargo-nextest, bun) are downloaded over HTTPS only, verified against their SHA-256 before they run, and cached in `.shipguard-cache/tools/` by version and re-verified against the pinned hash. Not covered by hashes: Python test dependencies (pytest, coverage, poetry) are pinned by version only; package managers (npm, bundler, corepack pnpm and yarn) and the toolchain come from the image or setup action; rustup components (clippy, rustfmt) are not pinned.
 - The shipguard binary is verified by the hash rendered into each template at release time (GitLab, Bitbucket), or by cosign and `checksums.txt` (GitHub composite action). A mismatch fails the job.
 - Repository code and `ci.steps.<step>.run` are the repository's own trusted code, like its Makefile. The trust boundary is the platform's: fork pipelines get no secrets. The adapters add no secrets and need no tokens, but the job gives every CI variable to the code under test, so keep secrets in protected variables.
 - The GitHub adapters use `contents: read`, `persist-credentials: false`, pass inputs only through `env:`, and are checked with zizmor and actionlint. `steps` accepts lowercase letters and spaces only.
@@ -210,6 +218,6 @@ Test reports appear on their own: `shipguard ci` writes `test-results/junit.xml`
 
 | Legacy | Now |
 |---|---|
-| `go-ci.yml` with `go_version` | `build-test.yml`; the version comes from `go.mod` or the `version` input. Needs a golangci-lint v2 config. |
-| `node-ci.yml` with `node_version`, `package_manager` | `build-test.yml`; the lockfile selects the manager, `pnpm` and `yarn` need `packageManager` in `package.json`. |
-| `python-ci.yml` with `python_version` | `build-test.yml`; needs `uv.lock`, `poetry.lock` or `requirements.txt`. |
+| `go-ci.yml` | `build-test.yml`. The version comes from `go.mod` (a `go` directive is now required) or the `version` input; the legacy default 1.22 no longer applies. A golangci-lint v2 config is required by both. `run_lint`, `run_tests`, `run_build` map to `steps:`; `build_output` and `build_package` have no input, use `ci.steps.build.run`. |
+| `node-ci.yml` | `build-test.yml`. The lockfile selects the manager. The legacy workflow requires `packageManager` in `package.json` for pnpm and yarn; shipguard ci recommends it (a different manager is an error). Without a version file the default is the Node version in `ci-tools.env`, not 20. `run_lint`, `run_tests`, `run_build` map to `steps:` or `ci.steps.<step>.enabled: false`. |
+| `python-ci.yml` | `build-test.yml`. Needs `uv.lock`, `poetry.lock` or `requirements.txt`. Without a version file the default is the first Python in `ci-tools.env`, not 3.11. Lint also runs `ruff format --check .`. `run_lint` and `run_tests` map to `steps:` or `ci.steps.<step>.enabled: false`. |
