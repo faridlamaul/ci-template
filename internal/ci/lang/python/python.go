@@ -375,7 +375,7 @@ func (Python) Steps(ctx context.Context, env ci.Env, _ ci.Detection, cfg policy.
 		if !pp.buildSystem {
 			return ci.Step{Skip: "no [build-system] in pyproject.toml"}, nil
 		}
-		return ci.Step{Cmds: []ci.Cmd{{Argv: []string{uv, "build"}}}}, nil
+		return ci.Step{Cmds: []ci.Cmd{{Argv: []string{uv, "build"}, Env: uvEnv()}}}, nil
 	}); err != nil {
 		return nil, err
 	}

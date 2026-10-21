@@ -123,7 +123,10 @@
           "build"
         ],
         "Shell": "",
-        "Env": null
+        "Env": {
+          "UV_PYTHON": "python3",
+          "UV_PYTHON_DOWNLOADS": "never"
+        }
       }
     ],
     "JUnit": null,

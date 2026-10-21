@@ -232,3 +232,29 @@ func TestRequirementsDevFlag(t *testing.T) {
 		t.Fatalf("pip = %q", got)
 	}
 }
+
+func TestEveryUvCmdPinsInterpreter(t *testing.T) {
+	for _, c := range []string{"req", "uv", "poetry"} {
+		t.Run(c, func(t *testing.T) {
+			steps, err := Python{}.Steps(context.Background(), fakeEnv(filepath.Join("testdata", c)), ci.Detection{}, policy.CIConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			n := 0
+			for _, s := range steps {
+				for _, cm := range s.Cmds {
+					if !(len(cm.Argv) > 0 && cm.Argv[0] == "/tools/uv") && !strings.Contains(cm.Shell, "/tools/uv") {
+						continue
+					}
+					n++
+					if cm.Env["UV_PYTHON"] != "python3" || cm.Env["UV_PYTHON_DOWNLOADS"] != "never" {
+						t.Fatalf("%s: uv cmd missing env: %+v", s.Name, cm)
+					}
+				}
+			}
+			if n < 4 {
+				t.Fatalf("only %d uv cmds found (build step included?)", n)
+			}
+		})
+	}
+}
