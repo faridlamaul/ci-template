@@ -93,6 +93,30 @@ jobs:
           SHIPGUARD_IMAGE: shipguard:dev
         run: go test -tags e2e -count=1 ./e2e/
 
+  ci-e2e:
+    name: ci e2e (${{ matrix.lang }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [go, node, python, ruby, rust]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+
+      # Runs shipguard ci on the fixtures in testdata/ci inside the official
+      # language image for this matrix entry.
+      - name: Run shipguard ci on the fixtures
+        env:
+          CI_E2E_LANG: ${{ matrix.lang }}
+        run: make ci-e2e LANG="$CI_E2E_LANG"
+
   zizmor:
     name: zizmor
     runs-on: ubuntu-latest
