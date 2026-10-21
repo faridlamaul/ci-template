@@ -66,6 +66,8 @@ type Result struct {
 	ImageDigest string
 	Steps       []StepResult
 	Findings    []finding.Finding // image findings; never fed to SARIF reporters
+
+	usageErr error // config problem found inside a step; Run returns it (exit 2)
 }
 
 const dryRunVersion = "0.0.0-dryrun"
@@ -146,7 +148,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	if o.DryRun {
 		r.Released = false // downstream jobs key on released; a dry run never releases
 	}
-	return r, nil
+	return r, r.usageErr
 }
 
 // ExitCode is 1 when any step failed or was blocked, else 0.
@@ -161,8 +163,3 @@ func (r Result) ExitCode() int {
 
 // imageStep is a seam so tests can prove the image step was invoked.
 var imageStep = image
-
-// image is replaced by the image step.
-func image(_ context.Context, _ Options, _ *Result) StepResult {
-	return StepResult{Status: "skipped", Reason: "not implemented"}
-}
