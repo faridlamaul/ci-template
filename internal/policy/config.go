@@ -133,6 +133,31 @@ func (e *Exception) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+// CIStep configures one `shipguard ci` step.
+type CIStep struct {
+	Run      string   `yaml:"run"`
+	Enabled  *bool    `yaml:"enabled"` // nil = default (true)
+	JUnit    []string `yaml:"junit"`
+	Coverage string   `yaml:"coverage"`
+}
+
+// On reports whether the step is enabled (the default).
+func (s CIStep) On() bool { return s.Enabled == nil || *s.Enabled }
+
+// CIConfig is the `ci:` section, read from the PR head.
+type CIConfig struct {
+	Language string `yaml:"language"` // "" | go | golang | node | python | ruby | rust
+	Version  string `yaml:"version"`
+	Timeouts struct {
+		PerStep time.Duration `yaml:"per_step"`
+	} `yaml:"timeouts"`
+	Steps struct {
+		Lint  CIStep `yaml:"lint"`
+		Test  CIStep `yaml:"test"`
+		Build CIStep `yaml:"build"`
+	} `yaml:"steps"`
+}
+
 // Config is the parsed .shipguard.yaml.
 type Config struct {
 	Version int    `yaml:"version"`
@@ -167,6 +192,7 @@ type Config struct {
 		FailOn map[finding.Category]Threshold `yaml:"fail_on"`
 	} `yaml:"policy"`
 	Exceptions []Exception `yaml:"exceptions"`
+	CI         CIConfig    `yaml:"ci"`
 }
 
 // Defaults returns the built-in configuration.
@@ -180,6 +206,7 @@ func Defaults() Config {
 	c.Scanners.SCA.Enabled = true
 	c.Scanners.IaC.Enabled = true
 	c.Timeouts.PerScanner = 15 * time.Minute
+	c.CI.Timeouts.PerStep = 30 * time.Minute
 	c.Policy.FailOn = map[finding.Category]Threshold{
 		finding.CategorySecrets: {Any: true},
 		finding.CategorySAST:    {Severity: finding.High},
@@ -286,6 +313,69 @@ func checkNodes(doc *yaml.Node) error {
 	if d := child(child(root, "timeouts"), "per_scanner"); d != nil && (d.Tag != "!!str" || !durationRe.MatchString(d.Value)) {
 		return fmt.Errorf("line %d: timeouts.per_scanner must be a duration string in ms, s, m or h units such as \"15m\" or \"1h30m\"", d.Line)
 	}
+	return checkCINodes(child(root, "ci"))
+}
+
+// checkCINodes rejects ci shapes the typed decode would accept silently:
+// null values and non-string scalars (version: 3.12) for string keys.
+func checkCINodes(ci *yaml.Node) error {
+	if ci == nil {
+		return nil
+	}
+	if ci.Tag == "!!null" {
+		return errors.New("ci must not be null")
+	}
+	if ci.Kind != yaml.MappingNode {
+		return nil // the typed decode reports it
+	}
+	str := func(n *yaml.Node, key string) error {
+		if n != nil && (n.Kind != yaml.ScalarNode || n.Tag != "!!str") {
+			return fmt.Errorf("line %d: %s must be a string", n.Line, key)
+		}
+		return nil
+	}
+	for _, k := range []string{"language", "version"} {
+		if err := str(child(ci, k), "ci."+k); err != nil {
+			return err
+		}
+	}
+	if t := child(ci, "timeouts"); t != nil && t.Tag == "!!null" {
+		return errors.New("ci.timeouts must not be null")
+	}
+	if d := child(child(ci, "timeouts"), "per_step"); d != nil && (d.Tag != "!!str" || !durationRe.MatchString(d.Value)) {
+		return fmt.Errorf("line %d: ci.timeouts.per_step must be a duration string in ms, s, m or h units such as \"30m\" or \"1h30m\"", d.Line)
+	}
+	steps := child(ci, "steps")
+	if steps != nil && steps.Tag == "!!null" {
+		return errors.New("ci.steps must not be null")
+	}
+	for _, name := range []string{"lint", "test", "build"} {
+		st := child(steps, name)
+		if st == nil {
+			continue
+		}
+		if st.Tag == "!!null" {
+			return fmt.Errorf("ci.steps.%s must not be null", name)
+		}
+		for _, k := range []string{"run", "coverage"} {
+			if err := str(child(st, k), "ci.steps."+name+"."+k); err != nil {
+				return err
+			}
+		}
+		if e := child(st, "enabled"); e != nil && (e.Kind != yaml.ScalarNode || e.Tag != "!!bool") {
+			return fmt.Errorf("line %d: ci.steps.%s.enabled must be true or false", e.Line, name)
+		}
+		if j := child(st, "junit"); j != nil {
+			if j.Kind != yaml.SequenceNode {
+				return fmt.Errorf("line %d: ci.steps.%s.junit must be a list of strings", j.Line, name)
+			}
+			for _, item := range j.Content {
+				if err := str(item, "ci.steps."+name+".junit items"); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -301,6 +391,19 @@ func (c Config) validate() error {
 	}
 	if c.Timeouts.PerScanner <= 0 {
 		return errors.New("timeouts.per_scanner must be positive")
+	}
+	switch c.CI.Language {
+	case "", "go", "golang", "node", "python", "ruby", "rust":
+	default:
+		return fmt.Errorf("ci.language must be one of go, golang, node, python, ruby, rust, got %q", c.CI.Language)
+	}
+	if c.CI.Timeouts.PerStep <= 0 {
+		return errors.New("ci.timeouts.per_step must be positive")
+	}
+	for name, st := range map[string]CIStep{"lint": c.CI.Steps.Lint, "test": c.CI.Steps.Test, "build": c.CI.Steps.Build} {
+		if !st.On() && st.Run != "" {
+			return fmt.Errorf("ci.steps.%s: run has no effect when enabled is false", name)
+		}
 	}
 	for cat := range c.Policy.FailOn {
 		switch cat {

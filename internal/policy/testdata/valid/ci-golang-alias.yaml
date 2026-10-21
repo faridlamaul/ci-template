@@ -1,0 +1,4 @@
+ci:
+  language: golang
+  timeouts:
+    per_step: 90s

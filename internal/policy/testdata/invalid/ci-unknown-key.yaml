@@ -1,0 +1,4 @@
+ci:
+  steps:
+    lint:
+      cmd: x

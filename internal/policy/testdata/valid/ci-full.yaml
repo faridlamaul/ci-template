@@ -1,0 +1,16 @@
+ci:
+  language: python
+  version: "3.12"
+  timeouts:
+    per_step: 45m
+  steps:
+    lint:
+      run: ruff check .
+    test:
+      run: pytest
+      junit:
+        - reports/junit.xml
+        - "other/*.xml"
+      coverage: reports/coverage.xml
+    build:
+      enabled: false
