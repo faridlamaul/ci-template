@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -83,7 +84,9 @@ type osvVuln struct {
 		Ranges []struct {
 			Type   string `json:"type"`
 			Events []struct {
-				Fixed string `json:"fixed"`
+				Introduced   string `json:"introduced"`
+				Fixed        string `json:"fixed"`
+				LastAffected string `json:"last_affected"`
 			} `json:"events"`
 		} `json:"ranges"`
 	} `json:"affected"`
@@ -147,7 +150,7 @@ func parseOSV(raw []byte, dir string) ([]finding.Finding, error) {
 					}
 					aliases = append(aliases, m.Aliases...)
 					if fixed == "" {
-						fixed = osvFixed(m, p.Package.Name, p.Package.Ecosystem)
+						fixed = osvFixed(m, p.Package.Name, p.Package.Version, p.Package.Ecosystem)
 					}
 				}
 				f := finding.Finding{
@@ -177,25 +180,142 @@ func parseOSV(raw []byte, dir string) ([]finding.Finding, error) {
 	return out, nil
 }
 
-// osvFixed returns the first fixed version for the package, ignoring GIT
-// ranges, whose "fixed" holds a commit hash.
-func osvFixed(v osvVuln, name, ecosystem string) string {
+// osvFixed returns the fixed version for the installed version of the
+// package, ignoring GIT ranges, whose "fixed" holds a commit hash: the
+// "fixed" closing the [introduced, fixed) interval that contains version.
+// When version cannot be placed in any interval (unparsable, or outside every
+// one) it returns the first fixed version, so a fix is reported whenever one
+// exists (fix_available_only fails closed).
+func osvFixed(v osvVuln, name, version, ecosystem string) string {
+	first := ""
 	for _, a := range v.Affected {
-		if a.Package.Name != name || a.Package.Ecosystem != ecosystem {
+		if a.Package.Ecosystem != ecosystem || osvName(a.Package.Name, ecosystem) != osvName(name, ecosystem) {
 			continue
 		}
 		for _, r := range a.Ranges {
 			if r.Type == "GIT" {
 				continue
 			}
+			introduced := "0"
 			for _, e := range r.Events {
-				if e.Fixed != "" {
-					return e.Fixed
+				switch {
+				case e.Introduced != "":
+					introduced = e.Introduced
+				case e.Fixed != "":
+					if first == "" {
+						first = e.Fixed
+					}
+					if versionIn(version, introduced, e.Fixed) {
+						return e.Fixed
+					}
+					introduced = "0"
 				}
 			}
 		}
 	}
-	return ""
+	return first
+}
+
+var pypiSeparators = regexp.MustCompile(`[-_.]+`)
+
+// osvName normalizes a package name the way OSV compares it: PyPI names per
+// PEP 503 (lowercase, runs of "-", "_" and "." become "-"); other ecosystems
+// are compared exactly.
+func osvName(name, ecosystem string) string {
+	if ecosystem == "PyPI" {
+		return pypiSeparators.ReplaceAllString(strings.ToLower(name), "-")
+	}
+	return name
+}
+
+// versionIn reports whether version lies in [introduced, fixed); introduced
+// "0" means from the beginning. Unparsable versions are in no interval.
+func versionIn(version, introduced, fixed string) bool {
+	if introduced != "0" {
+		if c, ok := compareVersions(version, introduced); !ok || c < 0 {
+			return false
+		}
+	}
+	c, ok := compareVersions(version, fixed)
+	return ok && c < 0
+}
+
+// compareVersions is a small ecosystem-agnostic comparator. Versions are
+// split into release, pre-release (after the first "-") and build metadata
+// (after "+", ignored); parts split on "." and "-"; numeric segments compare
+// numerically, others lexically, and a missing release segment is 0. A
+// version with a pre-release sorts before the same release. A leading "v" is
+// dropped. ok is false when either version is unparsable: empty, an empty
+// segment, or a release that does not start with a number.
+func compareVersions(a, b string) (int, bool) {
+	ar, ap, ok := splitVersion(a)
+	if !ok {
+		return 0, false
+	}
+	br, bp, ok := splitVersion(b)
+	if !ok {
+		return 0, false
+	}
+	if c := compareSegments(ar, br, "0"); c != 0 {
+		return c, true
+	}
+	switch {
+	case ap == nil && bp == nil:
+		return 0, true
+	case ap == nil:
+		return 1, true
+	case bp == nil:
+		return -1, true
+	}
+	return compareSegments(ap, bp, ""), true
+}
+
+func splitVersion(v string) (release, pre []string, ok bool) {
+	v = strings.TrimPrefix(v, "v")
+	v, _, _ = strings.Cut(v, "+")
+	r, p, hasPre := strings.Cut(v, "-")
+	release = strings.Split(r, ".")
+	if _, err := strconv.ParseUint(release[0], 10, 64); err != nil {
+		return nil, nil, false
+	}
+	if hasPre {
+		pre = strings.FieldsFunc(p, func(c rune) bool { return c == '.' || c == '-' })
+		if len(pre) == 0 {
+			return nil, nil, false
+		}
+	}
+	for _, s := range append(slices.Clone(release), pre...) {
+		if s == "" {
+			return nil, nil, false
+		}
+	}
+	return release, pre, true
+}
+
+// compareSegments compares segment lists; a missing segment is pad.
+func compareSegments(a, b []string, pad string) int {
+	for i := range max(len(a), len(b)) {
+		x, y := pad, pad
+		if i < len(a) {
+			x = a[i]
+		}
+		if i < len(b) {
+			y = b[i]
+		}
+		xn, xerr := strconv.ParseUint(x, 10, 64)
+		yn, yerr := strconv.ParseUint(y, 10, 64)
+		switch {
+		case xerr == nil && yerr == nil:
+			if c := cmp.Compare(xn, yn); c != 0 {
+				return c
+			}
+		default:
+			if c := strings.Compare(x, y); c != 0 {
+				return c
+			}
+		}
+	}
+	return 0
 }
 
 // mergeAliases returns the sorted union of a and b without self.

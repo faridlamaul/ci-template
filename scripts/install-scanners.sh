@@ -29,7 +29,7 @@ trap 'rm -rf "$work"' EXIT
 
 # fetch <url> <sha256> <output-name>: download into $work and verify.
 fetch() {
-  curl -fsSL --retry 3 -o "$work/$3" "$1"
+  curl -fsSL --proto "=https" --tlsv1.2 --retry 3 -o "$work/$3" "$1"
   echo "$2  $work/$3" | sha256sum -c -
 }
 

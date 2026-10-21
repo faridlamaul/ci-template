@@ -8,8 +8,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
@@ -201,6 +203,20 @@ func Parse(data []byte) (Config, error) {
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("%w: %v", ErrConfig, err)
 	}
+	// Later documents must be empty (a trailing "---", comments or null).
+	for {
+		var next yaml.Node
+		err := dec.Decode(&next)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return Config{}, fmt.Errorf("%w: %v", ErrConfig, err)
+		}
+		if !emptyDocument(&next) {
+			return Config{}, fmt.Errorf("%w: multiple YAML documents are not supported", ErrConfig)
+		}
+	}
 	if err := c.validate(); err != nil {
 		return Config{}, fmt.Errorf("%w: %v", ErrConfig, err)
 	}
@@ -221,6 +237,17 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return c, nil
+}
+
+// emptyDocument reports whether doc has no content or only a null scalar.
+func emptyDocument(doc *yaml.Node) bool {
+	if doc.Kind == yaml.DocumentNode {
+		if len(doc.Content) == 0 {
+			return true
+		}
+		doc = doc.Content[0]
+	}
+	return doc.Kind == yaml.ScalarNode && doc.Tag == "!!null"
 }
 
 // child returns the value node for key in mapping n, or nil.
@@ -277,7 +304,16 @@ func (c Config) validate() error {
 			return fmt.Errorf("policy.fail_on: unknown category %q", cat)
 		}
 	}
+	for i, p := range c.Paths.Exclude {
+		// A pattern ending in "/" is a plain prefix (finding.FilterPaths).
+		if !strings.HasSuffix(p, "/") && !doublestar.ValidatePattern(p) {
+			return fmt.Errorf("paths.exclude[%d]: invalid glob %q", i, p)
+		}
+	}
 	for i, e := range c.Exceptions {
+		if e.Path != "" && !doublestar.ValidatePattern(e.Path) {
+			return fmt.Errorf("exceptions[%d].path: invalid glob %q", i, e.Path)
+		}
 		if e.ID == "" {
 			return fmt.Errorf("exceptions[%d]: id is required", i)
 		}

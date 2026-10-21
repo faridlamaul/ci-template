@@ -16,11 +16,26 @@ rules:
       - pattern: request.GET.get(...)
       - pattern: request.POST.get(...)
     pattern-sinks:
+      # requests.get(url) / httpx.get(url): the URL is the first argument.
+      # For the generic request(method, url) form the first argument is the
+      # HTTP method, so it is excluded here and matched below.
       - patterns:
-          - pattern: requests.$M($URL, ...)
+          - pattern-either:
+              - pattern: requests.$M($URL, ...)
+              - pattern: httpx.$M($URL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(?!request$)
           - focus-metavariable: $URL
       - patterns:
-          - pattern: httpx.$M($URL, ...)
+          - pattern-either:
+              - pattern: requests.request($METHOD, $URL, ...)
+              - pattern: httpx.request($METHOD, $URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$M(..., url=$URL, ...)
+              - pattern: httpx.$M(..., url=$URL, ...)
           - focus-metavariable: $URL
       - patterns:
           - pattern: urllib.request.urlopen($URL, ...)
