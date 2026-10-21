@@ -33,11 +33,13 @@ jobs:
             exit 1
           fi
 
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test -race ./...
+      # shipguard lints and tests itself: golangci-lint (includes vet) and
+      # go test -race through the local composite, built from this checkout.
+      - name: Lint and test
+        uses: ./adapters/github/ci
+        with:
+          dir: .
+          steps: lint test
 
       - name: Test GitLab publish script
         run: make publish-test
