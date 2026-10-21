@@ -296,3 +296,33 @@ func TestWriteCIRemovesStaleCoverage(t *testing.T) {
 		t.Fatal("stale coverage.xml kept")
 	}
 }
+
+func TestMergeJUnitBareTestcases(t *testing.T) {
+	d := t.TempDir()
+	p := filepath.Join(d, "node.xml")
+	writeFile(t, p, `<?xml version="1.0"?>
+<testsuites>
+  <testcase name="passes" time="0.1"/>
+  <testcase name="fails" file="x.js" line="4"><failure message="nope"/></testcase>
+  <testsuite name="kept"><testcase name="inner"><failure message="in"/></testcase></testsuite>
+</testsuites>`)
+	var buf bytes.Buffer
+	fs, err := MergeJUnit([]string{p}, &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []TestFailure{
+		{Suite: "kept", Name: "inner", Message: "in"},
+		{Suite: "node.xml", Name: "fails", File: "x.js", Line: 4, Message: "nope"},
+	}
+	if len(fs) != 2 || fs[0] != want[0] || fs[1] != want[1] {
+		t.Fatalf("failures = %+v", fs)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `<testsuite name="node.xml">`) || !strings.Contains(out, `name="passes"`) || !strings.Contains(out, `name="kept"`) || out == "<testsuites/>\n" {
+		t.Fatalf("merged = %s", out)
+	}
+	if _, _, err := parseJUnit("n", []byte(out)); err != nil {
+		t.Fatalf("merged output not parseable: %v", err)
+	}
+}

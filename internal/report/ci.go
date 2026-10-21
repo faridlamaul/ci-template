@@ -110,19 +110,21 @@ func readJUnit(path string) ([][]byte, []TestFailure, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("read junit %s: %w", path, err)
 	}
-	raws, fs, err := parseJUnit(data)
+	raws, fs, err := parseJUnit(filepath.Base(path), data)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse junit %s: %w", path, err)
 	}
 	return raws, fs, nil
 }
 
-func parseJUnit(data []byte) ([][]byte, []TestFailure, error) {
+func parseJUnit(base string, data []byte) ([][]byte, []TestFailure, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil }
 	var raws [][]byte
 	var fails []TestFailure
 	sawRoot := false
+	var strayRaw []byte
+	var strayCases []junitCase
 	for {
 		start := dec.InputOffset()
 		tok, err := dec.Token()
@@ -147,6 +149,16 @@ func parseJUnit(data []byte) ([][]byte, []TestFailure, error) {
 			}
 			raws = append(raws, data[start:dec.InputOffset()])
 			fails = append(fails, suiteFailures(s)...)
+		case "testcase":
+			// Bare testcases under <testsuites> (e.g. Node's reporter).
+			sawRoot = true
+			var c junitCase
+			if err := dec.DecodeElement(&c, &se); err != nil {
+				return nil, nil, err
+			}
+			strayRaw = append(strayRaw, data[start:dec.InputOffset()]...)
+			strayRaw = append(strayRaw, '\n')
+			strayCases = append(strayCases, c)
 		default:
 			if !sawRoot {
 				return nil, nil, fmt.Errorf("unexpected root element <%s>", se.Name.Local)
@@ -158,6 +170,14 @@ func parseJUnit(data []byte) ([][]byte, []TestFailure, error) {
 	}
 	if !sawRoot {
 		return nil, nil, errors.New("no testsuite element")
+	}
+	if len(strayCases) > 0 {
+		var name bytes.Buffer
+		if err := xml.EscapeText(&name, []byte(base)); err != nil {
+			return nil, nil, err
+		}
+		raws = append(raws, []byte(`<testsuite name="`+name.String()+`">`+"\n"+string(strayRaw)+"</testsuite>"))
+		fails = append(fails, suiteFailures(junitSuite{Name: base, Cases: strayCases})...)
 	}
 	return raws, fails, nil
 }
