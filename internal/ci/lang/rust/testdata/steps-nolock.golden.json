@@ -1,0 +1,92 @@
+[
+  {
+    "Name": "install",
+    "Cmds": [
+      {
+        "Argv": [
+          "cargo",
+          "fetch"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "lint",
+    "Cmds": [
+      {
+        "Argv": [
+          "cargo",
+          "fmt",
+          "--check"
+        ],
+        "Shell": "",
+        "Env": null
+      },
+      {
+        "Argv": [
+          "cargo",
+          "clippy",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "test",
+    "Cmds": [
+      {
+        "Argv": null,
+        "Shell": "mkdir -p .shipguard/ci \u0026\u0026 printf '%s' '[profile.ci]\nfail-fast = false\n\n[profile.ci.junit]\npath = \"junit.xml\"\n' \u003e .shipguard/ci/nextest.toml",
+        "Env": null
+      },
+      {
+        "Argv": null,
+        "Shell": "'/tools/cargo-nextest' nextest run --profile ci --tool-config-file \"shipguard:$PWD/.shipguard/ci/nextest.toml\"",
+        "Env": null
+      }
+    ],
+    "JUnit": [
+      "target/nextest/ci/junit.xml"
+    ],
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "build",
+    "Cmds": [
+      {
+        "Argv": [
+          "cargo",
+          "build",
+          "--release"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  }
+]
