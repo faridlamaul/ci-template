@@ -2,6 +2,8 @@ module github.com/faridlamaul/shipguard
 
 go 1.26.0
 
+toolchain go1.27.3
+
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
