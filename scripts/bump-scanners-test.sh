@@ -73,7 +73,7 @@ JSON
         [ "${FAKE_NO_SUMFILES:-}" != 1 ] || exit 1
         for n in golangci-lint-1.0.0-linux-amd64.tar.gz golangci-lint-1.0.0-linux-arm64.tar.gz \
           gotestsum_1.0.0_linux_amd64.tar.gz gotestsum_1.0.0_linux_arm64.tar.gz \
-          bun-linux-x64-musl.zip bun-linux-aarch64-musl.zip; do
+          bun-linux-x64.zip bun-linux-aarch64.zip; do
           echo "$(sum "$n")  $n"
         done > "$dir/$pattern" ;;
       ruff-*.sha256|uv-*.sha256|cargo-nextest-*.sha256)
@@ -149,6 +149,15 @@ else pass "ci-tools.env keeps templates, defaults, comments and order"
 fi
 if [ "$(grep -c '' "$ci_env")" -eq "$(grep -c '' "$work/ci-original.env")" ]; then pass "ci-tools.env keeps its line count"
 else fail "ci-tools.env line count changed"; fi
+# bun is the glibc build (the musl one needs /lib/ld-musl-*, absent on Debian
+# images and GitHub runners), and the corepack pin is a kept manual default.
+if grep -qx 'BUN_URL_AMD64=https://github.com/oven-sh/bun/releases/download/bun-v{version}/bun-linux-x64.zip' "$ci_env" \
+  && grep -qx 'BUN_URL_ARM64=https://github.com/oven-sh/bun/releases/download/bun-v{version}/bun-linux-aarch64.zip' "$ci_env"; then
+  pass "bun pins the glibc assets"
+else fail "bun URL templates: $(grep '^BUN_URL_' "$ci_env")"; fi
+if grep -q '^COREPACK_VERSION=[0-9]' "$ci_env" && [ "$(grep '^COREPACK_VERSION=' "$ci_env")" = "$(grep '^COREPACK_VERSION=' "$work/ci-original.env")" ]; then
+  pass "COREPACK_VERSION is kept"
+else fail "COREPACK_VERSION changed or missing"; fi
 
 cp "$work/expected.env" "$work/repo/versions.env"
 # --check covers ci-tools.env: up to date is 0, a stale pin is 1 and writes nothing.

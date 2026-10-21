@@ -43,7 +43,7 @@ func TestLoadEmbedded(t *testing.T) {
 			}
 		}
 	}
-	for _, k := range []string{"NODE_DEFAULT", "PYTHON_DEFAULTS", "RUBY_DEFAULT", "RUST_DEFAULT", "PYTEST_VERSION", "COVERAGE_VERSION", "POETRY_VERSION"} {
+	for _, k := range []string{"NODE_DEFAULT", "PYTHON_DEFAULTS", "RUBY_DEFAULT", "RUST_DEFAULT", "PYTEST_VERSION", "COVERAGE_VERSION", "POETRY_VERSION", "COREPACK_VERSION"} {
 		if defs[k] == "" {
 			t.Errorf("missing default %s", k)
 		}
@@ -151,7 +151,7 @@ func TestEnsureDownloadsVerifiesCaches(t *testing.T) {
 func TestEnsureZipAndRawAndGlob(t *testing.T) {
 	var zb bytes.Buffer
 	zw := zip.NewWriter(&zb)
-	w, _ := zw.Create("bun-linux-x64-musl/bun")
+	w, _ := zw.Create("bun-linux-x64/bun")
 	_, _ = w.Write([]byte("bin"))
 	_ = zw.Close()
 	c, tool, _ := setup(t, zb.Bytes(), nil)
@@ -282,6 +282,31 @@ func TestEnsureIgnoresStaleOK(t *testing.T) {
 	}
 	if *hits != 1 {
 		t.Errorf("hits = %d", *hits)
+	}
+}
+
+func TestEnsureRehashesCachedBinary(t *testing.T) {
+	c, tool, hits := setup(t, tgz(t, entry{name: "demo-1.2.3/demo", body: "good"}), nil)
+	p, err := c.Ensure(context.Background(), tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A matching .ok marker is not enough: the cached executable is re-hashed.
+	if err := os.WriteFile(p, []byte("tampered"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p2, err := c.Ensure(context.Background(), tool)
+	if err != nil || p2 != p {
+		t.Fatalf("second = %s, %v", p2, err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "good" {
+		t.Errorf("content = %q, want the re-downloaded executable", b)
+	}
+	if *hits != 2 {
+		t.Errorf("hits = %d, want 2 (re-download after the hash mismatch)", *hits)
+	}
+	if _, err := c.Ensure(context.Background(), tool); err != nil || *hits != 2 {
+		t.Errorf("third: err = %v, hits = %d, want a cache hit", err, *hits)
 	}
 }
 

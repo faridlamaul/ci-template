@@ -34,7 +34,7 @@ var embedded string
 var toolKeys = []string{"GOLANGCI_LINT", "GOTESTSUM", "RUFF", "UV", "CARGO_NEXTEST", "BUN"}
 
 // defaultKeys lists the language defaults every pin file must carry.
-var defaultKeys = []string{"NODE_DEFAULT", "PYTHON_DEFAULTS", "RUBY_DEFAULT", "RUST_DEFAULT", "PYTEST_VERSION", "COVERAGE_VERSION", "POETRY_VERSION"}
+var defaultKeys = []string{"NODE_DEFAULT", "PYTHON_DEFAULTS", "RUBY_DEFAULT", "RUST_DEFAULT", "PYTEST_VERSION", "COVERAGE_VERSION", "POETRY_VERSION", "COREPACK_VERSION"}
 
 var arches = []string{"amd64", "arm64"}
 
@@ -153,9 +153,11 @@ type Cache struct {
 }
 
 // Ensure returns the absolute path of the tool's executable, downloading and
-// verifying it first when the cache has no entry whose .ok marker matches the
-// pinned SHA-256. A partially written entry is never trusted: it is built in a
-// staging directory and renamed into place only after verification.
+// verifying it first when the cache has no valid entry. An entry is valid when
+// its .ok marker names the pinned archive SHA-256 and the executable still
+// hashes to the SHA-256 recorded in the marker at install time. A partially
+// written entry is never trusted: it is built in a staging directory and
+// renamed into place only after verification.
 func (c *Cache) Ensure(ctx context.Context, t Tool) (string, error) {
 	want, ok := t.SHA256[c.Arch]
 	url := strings.ReplaceAll(t.URL[c.Arch], "{version}", t.Version)
@@ -173,10 +175,8 @@ func (c *Cache) Ensure(ctx context.Context, t Tool) (string, error) {
 		return "", fmt.Errorf("tool %s: %w", t.Name, err)
 	}
 	bin := filepath.Join(dir, path.Base(t.expandBin(c.Arch)))
-	if okMark, err := os.ReadFile(filepath.Join(dir, ".ok")); err == nil && strings.TrimSpace(string(okMark)) == want {
-		if st, err := os.Stat(bin); err == nil && st.Mode().IsRegular() {
-			return bin, nil
-		}
+	if cached(dir, bin, want) {
+		return bin, nil
 	}
 
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
@@ -214,7 +214,11 @@ func (c *Cache) Ensure(ctx context.Context, t Tool) (string, error) {
 	if err := t.install(dl, stage, c.Arch); err != nil {
 		return "", fmt.Errorf("tool %s: %w", t.Name, err)
 	}
-	if err := os.WriteFile(filepath.Join(stage, ".ok"), []byte(want+"\n"), 0o644); err != nil {
+	binSum, err := fileSHA256(filepath.Join(stage, filepath.Base(bin)))
+	if err != nil {
+		return "", fmt.Errorf("tool %s: %w", t.Name, err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, ".ok"), []byte(want+"\n"+binSum+"\n"), 0o644); err != nil {
 		return "", fmt.Errorf("tool %s: %w", t.Name, err)
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -224,6 +228,38 @@ func (c *Cache) Ensure(ctx context.Context, t Tool) (string, error) {
 		return "", fmt.Errorf("tool %s: %w", t.Name, err)
 	}
 	return bin, nil
+}
+
+// cached reports whether dir holds a verified install: the .ok marker is
+// "<archive sha256>\n<executable sha256>\n", the archive hash is the pinned
+// one and the executable still hashes to the recorded value.
+func cached(dir, bin, want string) bool {
+	mark, err := os.ReadFile(filepath.Join(dir, ".ok"))
+	if err != nil {
+		return false
+	}
+	lines := strings.Fields(string(mark))
+	if len(lines) != 2 || lines[0] != want || !sha256Re.MatchString(lines[1]) {
+		return false
+	}
+	if st, err := os.Lstat(bin); err != nil || !st.Mode().IsRegular() {
+		return false
+	}
+	got, err := fileSHA256(bin)
+	return err == nil && got == lines[1]
+}
+
+func fileSHA256(name string) (string, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // fetch downloads url into f (truncating it first) and returns the SHA-256 of
