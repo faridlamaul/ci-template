@@ -14,8 +14,25 @@ fails=0
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 pass() { echo "ok: $*"; }
 
-mkdir -p "$work/bin" "$work/repo/scripts"
+mkdir -p "$work/bin" "$work/repo/scripts" "$work/repo/internal/ci/tools" "$work/dl"
 cp "$root/scripts/bump-scanners.sh" "$work/repo/scripts/"
+ci_env="$work/repo/internal/ci/tools/ci-tools.env"
+cp "$root/internal/ci/tools/ci-tools.env" "$ci_env"
+cp "$ci_env" "$work/ci-original.env"
+
+# Tool assets are fetched with curl (https only); the script reads them from
+# this directory instead, which it only does when SHIPGUARD_BUMP_TEST=1.
+grep '_URL_' "$work/ci-original.env" | cut -d= -f2- | sed 's/{version}/1.0.0/g' | while read -r u; do
+  n=$(basename "$u")
+  printf 'asset:%s' "$n" > "$work/dl/$n"
+done
+
+# Stand-in for `go test ./internal/ci/tools/ -run TestLoadEmbedded`.
+cat > "$work/validate.sh" <<'VEOF'
+#!/bin/sh
+[ "${FAKE_VALIDATE_FAIL:-}" != 1 ]
+VEOF
+chmod +x "$work/validate.sh"
 
 # Fake gh: every release is v1.0.0, an asset's content is "asset:<name>" and
 # the checksums files and asset digests are computed from that content.
@@ -25,9 +42,24 @@ set -eu
 sum() { printf 'asset:%s' "$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1; }
 case "$1 $2" in
   "api repos/"*/releases/latest) echo v1.0.0 ;;
+  "api repos/"*"/releases?"*)
+    case "$2" in
+      *nextest*) p=cargo-nextest- ;; *bun*) p=bun-v ;; *astral-sh*) p= ;; *) p=v ;;
+    esac
+    cat <<JSON | jq -r "$4"
+[{"tag_name":"${p}2.0.0-rc1","prerelease":true,"draft":false},
+ {"tag_name":"nextest-runner-9.9.9","prerelease":false,"draft":false},
+ {"tag_name":"${p}3.0.0","prerelease":false,"draft":true},
+ {"tag_name":"${p}1.0.0","prerelease":false,"draft":false},
+ {"tag_name":"${p}0.9.0","prerelease":false,"draft":false}]
+JSON
+    ;;
   "api repos/"*/releases/tags/*)
     name=$(printf '%s' "$4" | sed 's/.*\.name=="\([^"]*\)".*/\1/')
-    echo "sha256:$(sum "$name")" ;;
+    case "$name" in
+      "${FAKE_BAD_DIGEST:-@@}") echo "sha256:$(sum bad-digest)" ;;
+      *) echo "sha256:$(sum "$name")" ;;
+    esac ;;
   "release download")
     pattern=$7 dir=$9
     case "$pattern" in
@@ -44,7 +76,11 @@ esac
 EOF
 chmod +x "$work/bin/gh"
 
-bump() { PATH="$work/bin:$PATH" "$work/repo/scripts/bump-scanners.sh" "$@"; }
+bump() {
+  PATH="$work/bin:$PATH" SHIPGUARD_BUMP_TEST=1 SHIPGUARD_BUMP_DL_DIR="$work/dl" \
+    SHIPGUARD_BUMP_VALIDATE="$work/validate.sh" "$work/repo/scripts/bump-scanners.sh" "$@"
+}
+sum_of() { printf 'asset:%s' "$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1; }
 
 # A write produces versions.env with every key.
 if bump > "$work/write.out" 2>&1 && grep -q '^TRIVY_VERSION=1.0.0$' "$work/repo/versions.env"; then
@@ -72,6 +108,70 @@ if cmp -s "$work/repo/versions.env" "$work/stale.env"; then pass "--check writes
 else fail "--check modified versions.env"; fi
 if cmp -s "$work/check.out" "$work/expected.env"; then pass "--check prints the resulting versions.env"
 else fail "--check stdout is not the resulting versions.env"; fi
+
+# ---- ci-tools.env ----
+
+# The first write bumped every tool and both of its checksums.
+for k in GOLANGCI_LINT GOTESTSUM RUFF UV CARGO_NEXTEST BUN; do
+  grep -q "^${k}_VERSION=1.0.0$" "$ci_env" || fail "${k}_VERSION not bumped to 1.0.0 (prereleases, drafts and other crates must be skipped)"
+done
+want_sha=$(sum_of ruff-x86_64-unknown-linux-musl.tar.gz)
+if grep -q "^RUFF_SHA256_AMD64=$want_sha$" "$ci_env"; then pass "ci-tools.env checksum is the SHA-256 of the downloaded asset"
+else fail "RUFF_SHA256_AMD64 is not the SHA-256 of the downloaded asset"; fi
+
+# Only <TOOL>_VERSION and <TOOL>_SHA256_* of the six tools may differ
+# (templates, manual defaults, comments and order stay).
+if diff "$work/ci-original.env" "$ci_env" | grep '^[<>]' \
+  | grep -Ev '^[<>] (GOLANGCI_LINT|GOTESTSUM|RUFF|UV|CARGO_NEXTEST|BUN)_(VERSION|SHA256_AMD64|SHA256_ARM64)=' | grep . >/dev/null; then
+  fail "ci-tools.env changed lines other than tool versions and checksums"
+else pass "ci-tools.env keeps templates, defaults, comments and order"
+fi
+if [ "$(grep -c '' "$ci_env")" -eq "$(grep -c '' "$work/ci-original.env")" ]; then pass "ci-tools.env keeps its line count"
+else fail "ci-tools.env line count changed"; fi
+
+cp "$work/expected.env" "$work/repo/versions.env"
+# --check covers ci-tools.env: up to date is 0, a stale pin is 1 and writes nothing.
+if bump --check > /dev/null 2> "$work/check.err"; then pass "--check exits 0 when ci-tools.env is up to date"
+else fail "--check exited $? with up-to-date files: $(cat "$work/check.err")"; fi
+cp "$ci_env" "$work/ci-good.env"
+sed 's/^BUN_VERSION=.*/BUN_VERSION=0.0.1/' "$work/ci-good.env" > "$ci_env"
+cp "$ci_env" "$work/ci-stale.env"
+cp "$work/expected.env" "$work/repo/versions.env"
+code=0
+bump --check > /dev/null 2> "$work/check.err" || code=$?
+if [ "$code" -eq 1 ]; then pass "--check exits 1 when ci-tools.env would change"
+else fail "--check exited $code when ci-tools.env would change (want 1)"; fi
+if cmp -s "$ci_env" "$work/ci-stale.env"; then pass "--check leaves ci-tools.env alone"
+else fail "--check modified ci-tools.env"; fi
+
+# --pin selects a tool version; the script adds the tag prefix.
+if bump --pin bun=0.9.0 > "$work/pin.out" 2>&1 && grep -q '^BUN_VERSION=0.9.0$' "$ci_env"; then pass "--pin bun=0.9.0 writes BUN_VERSION=0.9.0"
+else fail "--pin bun=0.9.0 not applied: $(cat "$work/pin.out")"; fi
+cp "$work/ci-stale.env" "$ci_env"
+code=0
+bump --pin golangci-lint=0.9.0 > "$work/pin.out" 2>&1 || code=$?
+if [ "$code" -ne 0 ] && cmp -s "$ci_env" "$work/ci-stale.env"; then pass "--pin of a version without downloadable assets fails"
+else fail "--pin golangci-lint=0.9.0 succeeded without assets"; fi
+
+# A digest that disagrees with the download fails and writes nothing.
+code=0
+FAKE_BAD_DIGEST=uv-x86_64-unknown-linux-musl.tar.gz bump > "$work/bad.out" 2>&1 || code=$?
+if [ "$code" -ne 0 ] && grep -q 'checksum mismatch' "$work/bad.out" && cmp -s "$ci_env" "$work/ci-stale.env"; then
+  pass "a digest mismatch fails without writing"
+else fail "digest mismatch not rejected (exit $code): $(cat "$work/bad.out")"; fi
+
+# A failing validation restores the original file and fails the bump.
+code=0
+FAKE_VALIDATE_FAIL=1 bump > "$work/val.out" 2>&1 || code=$?
+if [ "$code" -ne 0 ] && cmp -s "$ci_env" "$work/ci-stale.env"; then pass "failed validation restores ci-tools.env"
+else fail "failed validation not handled (exit $code)"; fi
+
+# Non-https templates are refused.
+sed 's#^UV_URL_AMD64=https://#UV_URL_AMD64=http://#' "$work/ci-stale.env" > "$ci_env"
+code=0
+bump > "$work/http.out" 2>&1 || code=$?
+if [ "$code" -ne 0 ] && grep -q 'https' "$work/http.out"; then pass "non-https tool URL is refused"
+else fail "non-https tool URL accepted (exit $code)"; fi
 
 if [ "$fails" -ne 0 ]; then echo "$fails failure(s)" >&2; exit 1; fi
 echo "all bump-scanners tests passed"

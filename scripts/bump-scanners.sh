@@ -1,18 +1,33 @@
 #!/usr/bin/env bash
 # Resolve the latest release of each pinned scanner, recompute the SHA-256 of
 # both Linux assets from the upstream checksums, verify them against the
-# downloaded files and rewrite versions.env. Idempotent: no change, no diff.
+# downloaded files and rewrite versions.env. Also keeps the CI tool pins in
+# internal/ci/tools/ci-tools.env current: only each tool's <TOOL>_VERSION and
+# <TOOL>_SHA256_* lines are rewritten (URL templates, manual defaults, comments
+# and order stay). The checksums are computed from the downloaded assets
+# (HTTPS only) and cross-checked against the digest GitHub records for them.
+# After a write, `go test ./internal/ci/tools/ -run TestLoadEmbedded` must pass
+# or the bump fails and ci-tools.env is restored. Idempotent.
 #
 # Usage: scripts/bump-scanners.sh [--check] [--pin tool=version ...]
 #   --check  print the resulting versions.env to stdout, write nothing; exit 1
-#            when versions.env would change, 0 when it is up to date
+#            when versions.env or ci-tools.env would change (the ci-tools.env
+#            diff goes to stderr), 0 when both are up to date
 #   --pin    use this version instead of the latest (tools: gitleaks,
-#            opengrep, osv-scanner, trivy)
-# Requires: gh (authenticated), curl, and sha256sum or shasum.
+#            opengrep, osv-scanner, trivy, golangci-lint, gotestsum, ruff, uv,
+#            cargo-nextest, bun)
+# Requires: gh (authenticated), jq, curl, go, and sha256sum or shasum.
+#
+# Test hooks, honoured only with SHIPGUARD_BUMP_TEST=1: SHIPGUARD_BUMP_DL_DIR
+# (read tool assets from this directory instead of downloading) and
+# SHIPGUARD_BUMP_VALIDATE (command run instead of go test).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/versions.env"
+ci_env="$root/internal/ci/tools/ci-tools.env"
+test_mode=0
+[ "${SHIPGUARD_BUMP_TEST:-}" = 1 ] && test_mode=1
 check=0
 pins=""   # space-separated tool=version pairs (bash 3.2 has no associative arrays)
 
@@ -109,15 +124,106 @@ for l in "${lines[@]}"; do
   case "$l" in *=|*=null) echo "missing value: $l" >&2; exit 1 ;; esac
 done
 
+# ---- internal/ci/tools/ci-tools.env ----
+
+# ci_tag <owner/repo> <tool> <tag-prefix>: newest stable release tag of the form
+# <prefix>X.Y.Z (skips prereleases, drafts and other crates' tags), or the
+# pinned version.
+ci_tag() {
+  local p
+  for p in $pins; do
+    if [ "${p%%=*}" = "$2" ]; then echo "$3${p#*=}"; return; fi
+  done
+  gh api "repos/$1/releases?per_page=100" --jq \
+    "[.[] | select(.prerelease == false and .draft == false and (.tag_name | test(\"^$3[0-9]+\\\\.[0-9]+\\\\.[0-9]+\$\")))][0].tag_name // empty"
+}
+
+# envget <KEY>: value of KEY in the current ci-tools.env.
+envget() { sed -n "s/^$1=//p" "$ci_env" | head -n 1; }
+
+# fetch <https-url> <dest>
+fetch() {
+  case "$1" in
+    https://*) ;;
+    *) echo "refusing non-https download URL: $1" >&2; exit 1 ;;
+  esac
+  if [ "$test_mode" -eq 1 ] && [ -n "${SHIPGUARD_BUMP_DL_DIR:-}" ]; then
+    cp "$SHIPGUARD_BUMP_DL_DIR/$(basename "$1")" "$2"
+  else
+    curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$2" "$1"
+  fi
+}
+
+ci_lines=()
+# ci_tool <KEY> <owner/repo> <tool> <tag-prefix>
+ci_tool() {
+  local key=$1 repo=$2 tool=$3 prefix=$4 tag v arch upper url asset sha digest
+  tag="$(ci_tag "$repo" "$tool" "$prefix")"
+  if [ -z "$tag" ]; then echo "$tool: no stable release found" >&2; exit 1; fi
+  v="${tag#"$prefix"}"
+  ci_lines+=("${key}_VERSION=$v")
+  for arch in amd64 arm64; do
+    upper="$(echo "$arch" | tr a-z A-Z)"
+    url="$(envget "${key}_URL_${upper}")"
+    url="${url//\{version\}/$v}"
+    asset="$(basename "$url")"
+    mkdir -p "$work/ci-$key-$arch"
+    fetch "$url" "$work/ci-$key-$arch/$asset"
+    sha="$(sha256 "$work/ci-$key-$arch/$asset")"
+    digest="$(gh api "repos/$repo/releases/tags/$tag" --jq ".assets[] | select(.name==\"$asset\") | .digest" | sed 's/^sha256://')"
+    case "$digest" in
+      ""|null) ;;
+      "$sha") ;;
+      *) echo "checksum mismatch for $asset: upstream $digest, downloaded $sha" >&2; exit 1 ;;
+    esac
+    ci_lines+=("${key}_SHA256_${upper}=$sha")
+  done
+}
+
+ci_tool GOLANGCI_LINT golangci/golangci-lint golangci-lint v
+ci_tool GOTESTSUM gotestyourself/gotestsum gotestsum v
+ci_tool RUFF astral-sh/ruff ruff ""
+ci_tool UV astral-sh/uv uv ""
+ci_tool CARGO_NEXTEST nextest-rs/nextest cargo-nextest cargo-nextest-
+ci_tool BUN oven-sh/bun bun bun-v
+
+# Rewrite only the computed keys, in place.
+printf '%s\n' "${ci_lines[@]}" > "$work/ci-new.kv"
+awk -F= 'NR == FNR { v[$1] = substr($0, length($1) + 2); next }
+  ($1 in v) { print $1 "=" v[$1]; next } { print }' "$work/ci-new.kv" "$ci_env" > "$work/ci-tools.env.new"
+
 body="$(printf '%s\n' "${lines[@]}")"
 if [ "$check" -eq 1 ]; then
   printf '%s\n' "$body"
+  drift=0
   if diff -u "$out" <(printf '%s\n' "$body") >&2; then
     echo "versions.env is up to date" >&2
   else
     echo "versions.env would change" >&2
-    exit 1
+    drift=1
   fi
+  if diff -u "$ci_env" "$work/ci-tools.env.new" >&2; then
+    echo "ci-tools.env is up to date" >&2
+  else
+    echo "ci-tools.env would change" >&2
+    drift=1
+  fi
+  exit "$drift"
 else
+  if ! cmp -s "$ci_env" "$work/ci-tools.env.new"; then
+    cp "$ci_env" "$work/ci-tools.env.orig"
+    cp "$work/ci-tools.env.new" "$ci_env"
+    cd "$root"
+    if [ "$test_mode" -eq 1 ] && [ -n "${SHIPGUARD_BUMP_VALIDATE:-}" ]; then
+      validate=("$SHIPGUARD_BUMP_VALIDATE")
+    else
+      validate=(go test ./internal/ci/tools/ -run TestLoadEmbedded)
+    fi
+    if ! "${validate[@]}" >&2; then
+      cp "$work/ci-tools.env.orig" "$ci_env"
+      echo "ci-tools.env failed validation; restored the previous file" >&2
+      exit 1
+    fi
+  fi
   printf '%s\n' "$body" > "$out"
 fi

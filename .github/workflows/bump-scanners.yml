@@ -30,7 +30,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Bump pinned scanners
+      # Also refreshes internal/ci/tools/ci-tools.env and validates that the
+      # embedded file still loads (go test) before reporting success.
+      - name: Bump pinned scanners and CI tools
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/bump-scanners.sh
@@ -38,7 +40,7 @@ jobs:
       - name: Detect changes
         id: diff
         run: |
-          if git diff --quiet -- versions.env; then
+          if git diff --quiet -- versions.env internal/ci/tools/ci-tools.env; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -66,7 +68,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
-          git add versions.env
+          git add versions.env internal/ci/tools/ci-tools.env
           git commit -m "chore(deps): bump pinned scanners"
           # Checkout used persist-credentials: false, so authenticate the push
           # explicitly with the job token. The branch is owned by this workflow.
@@ -79,6 +81,6 @@ jobs:
               --repo "$REPOSITORY" \
               --head "$branch" \
               --base main \
-              --title "chore(deps): bump pinned scanners" \
-              --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env. Checksums were recomputed from the upstream release files and verified against the downloaded assets. Unit tests and the image end-to-end test passed in the bump workflow."
+              --title "chore(deps): bump pinned scanners and CI tools" \
+              --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env, and of the CI tools (golangci-lint, gotestsum, ruff, uv, cargo-nextest, bun) in internal/ci/tools/ci-tools.env. Checksums were recomputed from the downloaded assets and verified against the upstream digests; the embedded ci-tools.env still loads. Unit tests and the image end-to-end test passed in the bump workflow."
           fi
