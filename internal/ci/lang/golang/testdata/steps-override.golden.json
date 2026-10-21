@@ -1,0 +1,66 @@
+[
+  {
+    "Name": "install",
+    "Cmds": [
+      {
+        "Argv": [
+          "go",
+          "mod",
+          "download"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 60000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "lint",
+    "Cmds": null,
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "disabled in config",
+    "Timeout": 60000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "test",
+    "Cmds": [
+      {
+        "Argv": null,
+        "Shell": "make t",
+        "Env": null
+      }
+    ],
+    "JUnit": [
+      "j/*.xml"
+    ],
+    "Coverage": "c.xml",
+    "Skip": "",
+    "Timeout": 60000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "build",
+    "Cmds": [
+      {
+        "Argv": [
+          "go",
+          "build",
+          "./..."
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 60000000000,
+    "HasAfter": false
+  }
+]
