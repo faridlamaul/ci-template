@@ -308,15 +308,19 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Attaches the rendered Bitbucket snippet to the GitHub release. It has its
-  # own job so the gitlab job keeps a read-only token. Prereleases get it too.
+  # own job so the gitlab job keeps a read-only token. Like the GitLab component
+  # it is stable-only: the render script takes X.Y.Z. The file is attested,
+  # because it carries the binary hashes Bitbucket users trust.
   bitbucket-snippet:
     name: Bitbucket snippet
     needs: [release, binaries]
-    if: needs.release.outputs.released == 'true'
+    if: needs.release.outputs.released == 'true' && !contains(needs.release.outputs.version, '-')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -329,6 +333,21 @@ jobs:
           SHIPGUARD_BIN_SHA256_AMD64: ${{ needs.binaries.outputs.sha256_amd64 }}
           SHIPGUARD_BIN_SHA256_ARM64: ${{ needs.binaries.outputs.sha256_arm64 }}
         run: ./scripts/render-gitlab.sh "${TAG#v}" dist/gitlab dist/bitbucket > /dev/null
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/bitbucket/build-test-pipelines.yml
+
+      - name: Summary
+        run: |
+          {
+            echo "## Bitbucket snippet"
+            echo
+            echo '```text'
+            sha256sum dist/bitbucket/build-test-pipelines.yml
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload to the release
         env:

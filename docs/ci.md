@@ -7,8 +7,15 @@
 Bitbucket has no component catalog, so the steps are a snippet you copy.
 
 1. Download `build-test-pipelines.yml` from the [GitHub release](https://github.com/faridlamaul/shipguard/releases) you want to use. The release copy has the version and the SHA-256 of the linux archives filled in; the file under `examples/bitbucket/` is the unrendered source.
-2. Copy the steps into your `bitbucket-pipelines.yml`. Keep the `&shipguard-ci` anchor in a step that stays in the file: the other languages reuse it with `*shipguard-ci`.
-3. Pick the image of each step (`golang:1.27`, `node:22`, ...) and set `SHIPGUARD_LANGUAGE` and `SHIPGUARD_TOOLCHAIN` to match.
+2. Verify it before copying; the file carries the hashes of the binary it downloads, so this is the trust anchor:
+
+   ```bash
+   gh attestation verify build-test-pipelines.yml --repo faridlamaul/shipguard
+   ```
+
+   The release run also prints the file's SHA-256 in its job summary.
+3. Copy the steps into your `bitbucket-pipelines.yml`. Keep the `&shipguard-ci` anchor in a step that stays in the file: the other languages reuse it with `*shipguard-ci`.
+4. Pick the image of each step (`golang:1.27`, `node:22`, ...) and set `SHIPGUARD_LANGUAGE` and `SHIPGUARD_TOOLCHAIN` to match.
 
 To pin a version, use the file of that release; the script downloads exactly that version and checks its SHA-256 before extracting it. To upgrade, replace the steps with the file of the newer release.
 

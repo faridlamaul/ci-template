@@ -84,6 +84,9 @@ no_token "$check/.git/config" "$work/main.git/config"
 
 # The Bitbucket example is rendered next to the GitLab set, never into it.
 bb=$work/bitbucket/build-test-pipelines.yml
+if [ ! -e "$work/bitbucket" ]; then pass "no bitbucket output without the third argument"; else fail "bitbucket rendered without the third argument"; fi
+"$root/scripts/render-gitlab.sh" 1.2.3 "$work/dist-bb" "$work/bitbucket" > /dev/null
+if grep -qx ' *SHIPGUARD_RELEASE="v1.2.3"' "$bb"; then pass "bitbucket example pins SHIPGUARD_RELEASE"; else fail "bitbucket SHIPGUARD_RELEASE"; fi
 if [ -f "$bb" ] && grep -q "$SHIPGUARD_BIN_SHA256_AMD64" "$bb" && grep -q "$SHIPGUARD_BIN_SHA256_ARM64" "$bb"; then pass "bitbucket example has both hashes"; else fail "bitbucket example hashes"; fi
 if grep -q '__SHIPGUARD_' "$bb"; then fail "bitbucket example placeholder left"; else pass "bitbucket example has no placeholder"; fi
 if grep -q 'v1.2.3' "$bb"; then pass "bitbucket example has the version"; else fail "bitbucket example version"; fi

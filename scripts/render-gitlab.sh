@@ -5,10 +5,10 @@
 # when any template does, SHIPGUARD_BIN_SHA256_AMD64 and SHIPGUARD_BIN_SHA256_ARM64
 # (64 lowercase hex) must be set, else exit 2.
 #
-# It also renders examples/bitbucket/build-test-pipelines.yml (when present)
-# with the same placeholders into BITBUCKET_OUT_DIR, default <OUT_DIR>/../bitbucket.
+# With BITBUCKET_OUT_DIR given, it also renders
+# examples/bitbucket/build-test-pipelines.yml there with the same placeholders.
 # That file is a release asset, not a GitLab template: it is never written to
-# OUT_DIR and its hash is not printed.
+# OUT_DIR and its hash is not printed. Without the argument it is not rendered.
 #
 # Usage: scripts/render-gitlab.sh VERSION [OUT_DIR [BITBUCKET_OUT_DIR]]   (VERSION is X.Y.Z, no "v")
 # Prints "<file> sha256-<base64>" for each rendered GitLab file: the value for
@@ -22,8 +22,9 @@ fi
 version=$1
 root=$(cd "$(dirname "$0")/.." && pwd)
 out=${2:-$root/dist/gitlab}
-bb_src=$root/examples/bitbucket/build-test-pipelines.yml
-bb_out=${3:-$(dirname "$out")/bitbucket}
+bb_out=${3:-}
+bb_src=
+[ -z "$bb_out" ] || bb_src=$root/examples/bitbucket/build-test-pipelines.yml
 
 case $version in
   *[!0-9.]*|''|.*|*.|*..*) bad=1 ;;
@@ -43,7 +44,7 @@ for src in "$root"/adapters/gitlab/*.yml; do
     need_hash=1
   fi
 done
-if [ -f "$bb_src" ] && grep -q '__SHIPGUARD_BIN_SHA256_' "$bb_src"; then
+if [ -n "$bb_src" ] && [ -f "$bb_src" ] && grep -q '__SHIPGUARD_BIN_SHA256_' "$bb_src"; then
   need_hash=1
 fi
 amd64=${SHIPGUARD_BIN_SHA256_AMD64:-}
@@ -69,7 +70,7 @@ for src in "$root"/adapters/gitlab/*.yml; do
   fi
 done
 
-if [ -f "$bb_src" ] && ! grep -q '__SHIPGUARD_VERSION__' "$bb_src"; then
+if [ -n "$bb_src" ] && [ -f "$bb_src" ] && ! grep -q '__SHIPGUARD_VERSION__' "$bb_src"; then
   echo "render-gitlab: placeholder missing in $bb_src" >&2
   exit 1
 fi
@@ -93,7 +94,7 @@ if [ -z "$rendered" ]; then
   exit 1
 fi
 
-if [ -f "$bb_src" ]; then
+if [ -n "$bb_src" ] && [ -f "$bb_src" ]; then
   mkdir -p "$bb_out"
   dst=$bb_out/$(basename "$bb_src")
   sed -e "s/__SHIPGUARD_VERSION__/v$version/g" \
