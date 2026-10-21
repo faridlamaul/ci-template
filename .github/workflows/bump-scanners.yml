@@ -56,6 +56,12 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         run: make e2e
 
+      # Runs every language fixture in its official image with the new CI tool
+      # pins, so an asset or archive layout change fails here, not after merge.
+      - name: shipguard ci end-to-end test
+        if: steps.diff.outputs.changed == 'true'
+        run: make ci-e2e
+
       # The bump lives on one fixed branch that every run force-updates, so a
       # newer bump replaces the previous one instead of opening another PR.
       - name: Open or update pull request
@@ -82,5 +88,5 @@ jobs:
               --head "$branch" \
               --base main \
               --title "chore(deps): bump pinned scanners and CI tools" \
-              --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env, and of the CI tools (golangci-lint, gotestsum, ruff, uv, cargo-nextest, bun) in internal/ci/tools/ci-tools.env. Every pinned checksum was computed from the downloaded asset and matched against each upstream source that exists (the GitHub asset digest and the project's published checksum file; at least one is required); the new ci-tools.env pins load (go test TestLoadEmbedded). Unit tests and the image end-to-end test passed in the bump workflow."
+              --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env, and of the CI tools (golangci-lint, gotestsum, ruff, uv, cargo-nextest, bun) in internal/ci/tools/ci-tools.env. Every pinned checksum was computed from the downloaded asset and matched against each upstream source that exists (the GitHub asset digest and the project's published checksum file; at least one is required); the new ci-tools.env pins load (go test TestLoadEmbedded). Unit tests, the image end-to-end test (make e2e) and the shipguard ci end-to-end test (make ci-e2e: every language fixture in its official image, using the new CI tool pins) passed in the bump workflow."
           fi
