@@ -192,7 +192,7 @@ func Worktree(dir, sha string) (string, func(), error) {
 	}
 	path := filepath.Join(tmp, "base")
 	if _, err := git(dir, "worktree", "add", "--quiet", "--detach", path, sha); err != nil {
-		os.RemoveAll(tmp)
+		_ = os.RemoveAll(tmp)
 		return "", nil, fmt.Errorf("create worktree at %s: %w", sha, err)
 	}
 	done := false
@@ -202,7 +202,7 @@ func Worktree(dir, sha string) (string, func(), error) {
 		}
 		done = true
 		_, _ = git(dir, "worktree", "remove", "--force", path)
-		os.RemoveAll(tmp)
+		_ = os.RemoveAll(tmp)
 		_, _ = git(dir, "worktree", "prune")
 	}
 	return path, cleanup, nil

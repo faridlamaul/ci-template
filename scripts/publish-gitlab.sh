@@ -133,15 +133,21 @@ cp "$root/README.md" "$root/LICENSE" "$work/"
 cp "$root/adapters/gitlab/publish/.gitlab-ci.yml" "$work/.gitlab-ci.yml"
 # The publish pipeline includes the smoke test from test/.gitlab-ci.yml.
 cp "$root/adapters/gitlab/test/.gitlab-ci.yml" "$work/test/.gitlab-ci.yml"
+# The component smoke test runs on a copy of the Go pass fixture.
+cp "$root/adapters/gitlab/test/ci.gitlab-ci.yml" "$work/test/ci.gitlab-ci.yml"
+rm -rf "$work/test/fixtures"
+mkdir -p "$work/test/fixtures/go-pass"
+cp "$root"/testdata/ci/go/pass/* "$work/test/fixtures/go-pass/"
 
-first=${files# }
-first=${first%% *}
+# The example pins scan.yml: it has no required inputs, so it works as pasted.
+example=scan.yml
+[ -f "$rendered/$example" ] || die 2 "rendered $example is missing"
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 {
   printf '# shipguard %s template hashes\n\n' "$version"
   printf 'Pin a template included by URL with its hash:\n\n'
   printf '```yaml\ninclude:\n  - remote: https://%s/-/raw/%s/templates/%s\n    integrity: %s\n```\n\n' \
-    "$repo" "$version" "$first" "$(hash_of "$rendered/$first")"
+    "$repo" "$version" "$example" "$(hash_of "$rendered/$example")"
   printf 'SHA-256 of each file in `templates/` at tag `%s`:\n\n```text\n' "$version"
   for name in $files; do
     printf 'templates/%s %s\n' "$name" "$(hash_of "$rendered/$name")"
@@ -149,7 +155,7 @@ first=${first%% *}
   printf '```\n'
 } > "$work/INTEGRITY.md"
 
-g -C "$work" add -A -- templates test/.gitlab-ci.yml README.md LICENSE .gitlab-ci.yml INTEGRITY.md
+g -C "$work" add -A -- templates test/.gitlab-ci.yml test/ci.gitlab-ci.yml test/fixtures README.md LICENSE .gitlab-ci.yml INTEGRITY.md
 g -C "$work" commit --quiet --allow-empty -m "release $version"
 g -C "$work" tag -a -m "release $version" "$version"
 # --atomic: the branch and the tag land together or not at all. Without

@@ -34,13 +34,21 @@ on:
         default: "./..."
         required: false
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     if: inputs.run_lint
     runs-on: ubuntu-latest
     steps:
+      - name: Deprecation notice
+        run: echo "::warning title=Deprecated::go-ci is deprecated; use faridlamaul/shipguard/.github/workflows/build-test.yml (see docs/ci.md). It will be removed in the next major release."
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -51,15 +59,23 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: latest
-        continue-on-error: true
+          # golangci-lint v2 needs a v2 config: consumers with a v1
+          # .golangci.yml must migrate, see
+          # https://golangci-lint.run/docs/product/migration-guide/
+          # Mirrors internal/ci/tools/ci-tools.env; update together.
+          version: v2.15.0
 
   test:
     if: inputs.run_tests
     runs-on: ubuntu-latest
     steps:
+      - name: Deprecation notice
+        run: echo "::warning title=Deprecated::go-ci is deprecated; use faridlamaul/shipguard/.github/workflows/build-test.yml (see docs/ci.md). It will be removed in the next major release."
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -84,8 +100,13 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     steps:
+      - name: Deprecation notice
+        run: echo "::warning title=Deprecated::go-ci is deprecated; use faridlamaul/shipguard/.github/workflows/build-test.yml (see docs/ci.md). It will be removed in the next major release."
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -94,5 +115,10 @@ jobs:
           cache: true
 
       - name: Verify build compilation
+        env:
+          BUILD_OUTPUT: ${{ inputs.build_output }}
+          BUILD_PACKAGE: ${{ inputs.build_package }}
         run: |
-          CGO_ENABLED=0 go build -v -ldflags="-s -w" -o ${{ inputs.build_output }} ${{ inputs.build_package }}
+          set -f
+          read -r -a pkgs <<<"$BUILD_PACKAGE"
+          CGO_ENABLED=0 go build -v -ldflags="-s -w" -o "$BUILD_OUTPUT" "${pkgs[@]}"

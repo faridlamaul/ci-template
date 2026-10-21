@@ -1,0 +1,67 @@
+name: Adapter CI
+
+# Self-test of the GitHub build and test adapter: the composite action on a
+# passing and a failing fixture, and the reusable workflow.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  composite-pass:
+    name: Composite action (go, passes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run composite action
+        uses: ./adapters/github/ci
+        with:
+          dir: testdata/ci/go/pass
+
+  composite-fail:
+    name: Composite action (node, fails)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run composite action
+        id: ci
+        continue-on-error: true
+        uses: ./adapters/github/ci
+        with:
+          dir: testdata/ci/node/fail-test
+
+      - name: Assert the run failed in the test step
+        env:
+          OUTCOME: ${{ steps.ci.outcome }}
+          DIR: testdata/ci/node/fail-test
+        run: |
+          echo "outcome=$OUTCOME"
+          test "$OUTCOME" = "failure"
+          cat "$DIR/.shipguard/ci/result.json"
+          jq -e '
+            (.language == "node") and
+            ([.steps[] | select(.name == "install") | .status] == ["passed"]) and
+            ([.steps[] | select(.name == "lint") | .status] == ["passed"]) and
+            ([.steps[] | select(.name == "test") | .status] == ["failed"])
+          ' "$DIR/.shipguard/ci/result.json"
+
+  reusable:
+    name: Reusable workflow (python, passes)
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-test.yml
+    with:
+      dir: testdata/ci/python/pass

@@ -168,6 +168,155 @@
           "expires"
         ]
       }
+    },
+    "ci": {
+      "description": "shipguard ci settings. Read from the PR head, not the base.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "language": {
+          "enum": [
+            "",
+            "go",
+            "golang",
+            "node",
+            "python",
+            "ruby",
+            "rust"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "timeouts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "per_step": {
+              "description": "A positive duration in ms, s, m or h units, such as 30m or 1h30m.",
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$",
+              "not": {
+                "pattern": "^(0+(\\.0*)?(ms|s|m|h))+$"
+              }
+            }
+          }
+        },
+        "steps": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lint": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "run": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "junit": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "coverage": {
+                  "type": "string"
+                }
+              },
+              "if": {
+                "required": [
+                  "run",
+                  "enabled"
+                ],
+                "properties": {
+                  "run": {
+                    "minLength": 1
+                  },
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              },
+              "then": false
+            },
+            "test": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "run": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "junit": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "coverage": {
+                  "type": "string"
+                }
+              },
+              "if": {
+                "required": [
+                  "run",
+                  "enabled"
+                ],
+                "properties": {
+                  "run": {
+                    "minLength": 1
+                  },
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              },
+              "then": false
+            },
+            "build": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "run": {
+                  "type": "string"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "junit": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "coverage": {
+                  "type": "string"
+                }
+              },
+              "if": {
+                "required": [
+                  "run",
+                  "enabled"
+                ],
+                "properties": {
+                  "run": {
+                    "minLength": 1
+                  },
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              },
+              "then": false
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {

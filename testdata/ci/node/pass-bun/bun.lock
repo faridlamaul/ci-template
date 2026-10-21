@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "fixture-bun",
+      "dependencies": {
+        "greet": "file:./vendor/greet",
+      },
+    },
+  },
+  "packages": {
+    "greet": ["greet@file:vendor/greet", {}],
+  }
+}

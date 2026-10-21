@@ -404,3 +404,111 @@ func TestEmptyConfigIsDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestCIDefaults(t *testing.T) {
+	c := Defaults()
+	if c.CI.Timeouts.PerStep != 30*time.Minute {
+		t.Errorf("per_step = %v, want 30m", c.CI.Timeouts.PerStep)
+	}
+	for name, s := range map[string]CIStep{"lint": c.CI.Steps.Lint, "test": c.CI.Steps.Test, "build": c.CI.Steps.Build} {
+		if !s.On() {
+			t.Errorf("step %s is off by default", name)
+		}
+	}
+}
+
+func TestCIValid(t *testing.T) {
+	data, err := os.ReadFile("testdata/valid/ci-full.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.CI.Language != "python" || c.CI.Version != "3.12" || c.CI.Timeouts.PerStep != 45*time.Minute {
+		t.Errorf("ci = %+v", c.CI)
+	}
+	if c.CI.Steps.Lint.Run != "ruff check ." || !c.CI.Steps.Lint.On() {
+		t.Errorf("lint = %+v", c.CI.Steps.Lint)
+	}
+	if got := c.CI.Steps.Test; got.Run != "pytest" || got.Coverage != "reports/coverage.xml" ||
+		!reflect.DeepEqual(got.JUnit, []string{"reports/junit.xml", "other/*.xml"}) {
+		t.Errorf("test = %+v", got)
+	}
+	if c.CI.Steps.Build.On() {
+		t.Error("build should be disabled")
+	}
+	for _, lang := range []string{"", "go", "golang", "node", "python", "ruby", "rust"} {
+		if _, err := Parse([]byte("ci:\n  language: \"" + lang + "\"\n")); err != nil {
+			t.Errorf("language %q: %v", lang, err)
+		}
+	}
+	c, err = Parse([]byte("ci:\n  language: golang\n"))
+	if err != nil || c.CI.Language != "golang" {
+		t.Errorf("language stored as written: %q, %v", c.CI.Language, err)
+	}
+}
+
+func TestCIInvalid(t *testing.T) {
+	for file, want := range map[string]string{
+		"ci-unknown-step.yaml":   "deploy",
+		"ci-unknown-key.yaml":    "cmd",
+		"ci-bad-language.yaml":   "ci.language",
+		"ci-bad-timeout.yaml":    "ci.timeouts.per_step",
+		"ci-timeout-zero.yaml":   "ci.timeouts.per_step",
+		"ci-timeout-number.yaml": "ci.timeouts.per_step",
+		"ci-junit-scalar.yaml":   "junit",
+		"ci-run-disabled.yaml":   "run has no effect when enabled is false",
+		"ci-version-number.yaml": "ci.version",
+		"ci-null.yaml":           "ci",
+	} {
+		t.Run(file, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata/invalid", file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = Parse(data)
+			if !errors.Is(err, ErrConfig) {
+				t.Fatalf("err = %v, want ErrConfig", err)
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("err = %q, want it to mention %q", err, want)
+			}
+		})
+	}
+}
+
+func TestCISchemaAgrees(t *testing.T) {
+	schema := compile(t, "../../schema/shipguard.schema.json")
+	for dir, wantOK := range map[string]bool{"testdata/valid": true, "testdata/invalid": false} {
+		files, err := filepath.Glob(filepath.Join(dir, "ci-*.yaml"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("%s: no ci fixtures (%v)", dir, err)
+		}
+		for _, f := range files {
+			t.Run(f, func(t *testing.T) {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					t.Fatal(err)
+				}
+				perr, serr := validateBoth(t, schema, string(data))
+				if (perr == nil) != wantOK || (serr == nil) != wantOK {
+					t.Errorf("parser err=%v, schema err=%v, want ok=%v", perr, serr, wantOK)
+				}
+			})
+		}
+	}
+}
+
+func TestCIPerStepUnitsAgree(t *testing.T) {
+	schema := compile(t, "../../schema/shipguard.schema.json")
+	for in, wantOK := range map[string]bool{"30m": true, "500ms": true, "1h30m": true, "1000us": false, "0s": false, ".5s": false, "5": false} {
+		t.Run(in, func(t *testing.T) {
+			perr, serr := validateBoth(t, schema, "ci:\n  timeouts:\n    per_step: \""+in+"\"\n")
+			if (perr == nil) != wantOK || (serr == nil) != wantOK {
+				t.Errorf("parser err=%v, schema err=%v, want ok=%v", perr, serr, wantOK)
+			}
+		})
+	}
+}

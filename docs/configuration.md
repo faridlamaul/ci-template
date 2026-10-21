@@ -132,6 +132,37 @@ scanners:
     default_excludes: false
 ```
 
+## CI steps (`ci`)
+
+The `ci` section configures `shipguard ci` (lint, test and build). Unlike the security policy, it is read from the pull request head, not the base, because the PR owns its own build commands. Unknown keys under `ci` are config errors (exit 2). Usage per platform, defaults per language and outputs are in [ci.md](ci.md).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `ci.language` | `go`, `golang`, `node`, `python`, `ruby`, `rust` or empty | `""` | Language to use. Empty means detect it from the repository. |
+| `ci.version` | string | `""` | Language toolchain version, for example `"3.12"`. Always quote it. |
+| `ci.timeouts.per_step` | duration string | `30m` | A positive duration in `ms`, `s`, `m` or `h` units, as for `timeouts.per_scanner`. |
+| `ci.steps.<step>.run` | string | `""` | Command that replaces the language default. `<step>` is `lint`, `test` or `build`. |
+| `ci.steps.<step>.enabled` | bool | `true` | Set `false` to skip the step. Setting `run` on a disabled step is an error. |
+| `ci.steps.<step>.junit` | list of strings | `[]` | JUnit XML globs your own command writes (set for `test`). A `run` override drops the step's default JUnit. |
+| `ci.steps.<step>.coverage` | string | `""` | Cobertura file your own command writes. A `run` override drops the step's default coverage. |
+
+```yaml shipguard-config
+ci:
+  language: python
+  version: "3.12"
+  timeouts:
+    per_step: 45m
+  steps:
+    lint:
+      run: ruff check .
+    test:
+      run: pytest --junitxml=reports/junit.xml
+      junit:
+        - reports/junit.xml
+    build:
+      enabled: false
+```
+
 ## Pull requests: the policy comes from the base
 
 On a pull request or merge request:

@@ -1,0 +1,65 @@
+version: 2
+
+project_name: shipguard
+
+builds:
+  - id: shipguard
+    main: ./cmd/shipguard
+    binary: shipguard
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [linux]
+    goarch: [amd64, arm64]
+    # Reproducible binaries: a re-run builds the same bytes.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "shipguard_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Reproducible archives: fixed mtime, owner and mode.
+    builds_info:
+      mode: 0755
+      mtime: "{{ .CommitDate }}"
+    files:
+      - src: LICENSE
+        info:
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info:
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+
+checksum:
+  name_template: checksums.txt
+
+# Keyless signature of checksums.txt; the GitHub action verifies it with
+# checksums.txt.sigstore.json before it trusts any archive hash.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+# shiptag writes the release notes and creates the release; GoReleaser only
+# appends the archives, checksums and signature bundle to it.
+changelog:
+  disable: true
+
+# An update sends these fields, so they are set on purpose: prerelease follows
+# the tag (shiptag's prereleases stay prereleases), the release is never a
+# draft, and the name stays the tag. "Latest" is left to GoReleaser's default.
+release:
+  mode: append
+  prerelease: auto
+  draft: false
+  name_template: "{{ .Tag }}"

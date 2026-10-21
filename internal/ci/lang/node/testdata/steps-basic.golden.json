@@ -1,0 +1,77 @@
+[
+  {
+    "Name": "install",
+    "Cmds": [
+      {
+        "Argv": [
+          "npm",
+          "ci"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "lint",
+    "Cmds": [
+      {
+        "Argv": [
+          "npm",
+          "run",
+          "lint"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "test",
+    "Cmds": [
+      {
+        "Argv": [
+          "npm",
+          "run",
+          "test"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "build",
+    "Cmds": [
+      {
+        "Argv": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  }
+]

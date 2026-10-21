@@ -1,0 +1,93 @@
+[
+  {
+    "Name": "install",
+    "Cmds": [
+      {
+        "Argv": [
+          "go",
+          "mod",
+          "download"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "lint",
+    "Cmds": [
+      {
+        "Argv": [
+          "/tools/golangci-lint",
+          "run",
+          "./..."
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "test",
+    "Cmds": [
+      {
+        "Argv": [
+          "mkdir",
+          "-p",
+          ".shipguard/ci"
+        ],
+        "Shell": "",
+        "Env": null
+      },
+      {
+        "Argv": [
+          "/tools/gotestsum",
+          "--junitfile",
+          ".shipguard/ci/junit-go.xml",
+          "--",
+          "-race",
+          "-coverprofile=.shipguard/ci/cover.out",
+          "./..."
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": [
+      ".shipguard/ci/junit-go.xml"
+    ],
+    "Coverage": ".shipguard/ci/coverage.xml",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": true
+  },
+  {
+    "Name": "build",
+    "Cmds": [
+      {
+        "Argv": [
+          "go",
+          "build",
+          "./..."
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  }
+]

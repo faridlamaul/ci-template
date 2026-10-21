@@ -88,7 +88,7 @@ func execute(ctx context.Context, args []string, getenv func(string) string, std
 	root.SetArgs(args)
 	if err := root.ExecuteContext(ctx); err != nil {
 		if !errors.Is(err, errReported) {
-			fmt.Fprintf(stderr, "error: %s\n", err)
+			_, _ = fmt.Fprintf(stderr, "error: %s\n", err)
 		}
 		var ee *exitcode.Err
 		if errors.As(err, &ee) {
@@ -132,6 +132,7 @@ func newRoot(getenv func(string) string, stdout, stderr io.Writer) (*cobra.Comma
 		gateCmd(g, getenv, stdout),
 		reportCmd(g, getenv, stderr),
 		runCmd(g, getenv, stdout, stderr),
+		ciCmd(g, getenv, stdout, stderr),
 		versionCmd(stdout),
 	)
 	return root, g
@@ -142,7 +143,7 @@ func resolveFlags(fs *pflag.FlagSet, g *globals, getenv func(string) string) err
 	bitbucket := getenv("BITBUCKET_BUILD_NUMBER") != ""
 	var err error
 	fs.VisitAll(func(f *pflag.Flag) {
-		if f.Changed || err != nil {
+		if f.Changed || err != nil || len(f.Annotations[noEnvAnnotation]) > 0 {
 			return
 		}
 		name := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
@@ -229,7 +230,7 @@ func doScan(ctx context.Context, g *globals, getenv func(string) string, stdout,
 	}
 	for _, r := range res.Scanners {
 		if r.Status == finding.RunStatusError {
-			fmt.Fprintf(stderr, "warning: %s failed: %s\n", r.Name, r.Error)
+			_, _ = fmt.Fprintf(stderr, "warning: %s failed: %s\n", r.Name, r.Error)
 		}
 	}
 	_, err = fmt.Fprintf(stdout, "shipguard scan: %d findings, results in %s\n",
@@ -394,7 +395,7 @@ func doReport(ctx context.Context, g *globals, getenv func(string) string, stder
 	}
 	if err := report.Report(ctx, g.dir, g.format, res, d, env); err != nil {
 		if errors.Is(err, report.ErrUpload) {
-			fmt.Fprintf(stderr, "warning: %s\n", err)
+			_, _ = fmt.Fprintf(stderr, "warning: %s\n", err)
 			return nil
 		}
 		return fail(err)
@@ -414,7 +415,7 @@ func runCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *c
 			ctx := cmd.Context()
 			code := exitcode.Pass
 			note := func(err error) {
-				fmt.Fprintf(stderr, "error: %s\n", err)
+				_, _ = fmt.Fprintf(stderr, "error: %s\n", err)
 				var ee *exitcode.Err
 				c := exitcode.Error
 				if errors.As(err, &ee) {
@@ -429,7 +430,7 @@ func runCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *c
 				code = exitcode.Error
 			}
 			if scanFailed {
-				fmt.Fprintln(stderr, "warning: scan failed; skipping gate and report")
+				_, _ = fmt.Fprintln(stderr, "warning: scan failed; skipping gate and report")
 			} else {
 				if err := doGate(g, getenv, stdout); err != nil {
 					note(err)
@@ -439,7 +440,7 @@ func runCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *c
 					if code == exitcode.Pass {
 						note(err)
 					} else {
-						fmt.Fprintf(stderr, "warning: report: %s\n", err)
+						_, _ = fmt.Fprintf(stderr, "warning: report: %s\n", err)
 					}
 				}
 			}

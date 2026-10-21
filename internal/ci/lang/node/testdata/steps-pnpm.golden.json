@@ -1,0 +1,92 @@
+[
+  {
+    "Name": "install",
+    "Cmds": [
+      {
+        "Argv": null,
+        "Shell": "command -v corepack \u003e/dev/null 2\u003e\u00261 || npm install -g corepack@0.36.0",
+        "Env": null
+      },
+      {
+        "Argv": [
+          "corepack",
+          "enable",
+          "pnpm"
+        ],
+        "Shell": "",
+        "Env": null
+      },
+      {
+        "Argv": [
+          "pnpm",
+          "install",
+          "--frozen-lockfile"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "lint",
+    "Cmds": [
+      {
+        "Argv": [
+          "pnpm",
+          "run",
+          "lint"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "test",
+    "Cmds": [
+      {
+        "Argv": [
+          "pnpm",
+          "run",
+          "test"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "build",
+    "Cmds": [
+      {
+        "Argv": [
+          "pnpm",
+          "run",
+          "build"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  }
+]

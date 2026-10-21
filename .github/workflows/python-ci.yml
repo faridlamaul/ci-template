@@ -19,12 +19,20 @@ on:
         default: true
         required: false
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
+      - name: Deprecation notice
+        run: echo "::warning title=Deprecated::python-ci is deprecated; use faridlamaul/shipguard/.github/workflows/build-test.yml (see docs/ci.md). It will be removed in the next major release."
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -37,7 +45,10 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install pytest ruff
+          # Pins mirror internal/ci/tools/ci-tools.env; update together.
+          # Consumer-pinned versions from requirements files win.
+          python -m pytest --version >/dev/null 2>&1 || pip install pytest==9.1.1
+          ruff --version >/dev/null 2>&1 || pip install ruff==0.17.1
 
       - name: Run linter
         if: inputs.run_lint

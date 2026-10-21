@@ -1,0 +1,58 @@
+[
+  {
+    "Name": "install",
+    "Cmds": [
+      {
+        "Argv": [
+          "/tools/bun",
+          "install",
+          "--frozen-lockfile"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "lint",
+    "Cmds": null,
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "no lint script in package.json",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "test",
+    "Cmds": [
+      {
+        "Argv": [
+          "/tools/bun",
+          "run",
+          "test"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "build",
+    "Cmds": null,
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "no build script in package.json",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  }
+]

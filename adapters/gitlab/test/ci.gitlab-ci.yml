@@ -1,0 +1,25 @@
+# Smoke test of the build and test component. Includes the rendered template
+# (templates/ci.yml in the publish project) on the Go pass fixture that
+# scripts/publish-gitlab.sh copies to test/fixtures/go-pass, and asserts the
+# job succeeded.
+stages: [test, verify]
+
+include:
+  - local: templates/ci.yml
+    inputs:
+      language: golang
+      version: "1.27"
+      dir: test/fixtures/go-pass
+
+ci-smoke-assert:
+  stage: verify
+  image:
+    name: alpine:3.20
+    entrypoint: [""]
+  needs:
+    - job: shipguard-ci
+      artifacts: true
+  script:
+    - test -s test/fixtures/go-pass/.shipguard/ci/result.json
+    - test -s test/fixtures/go-pass/.shipguard/ci/test-results/junit.xml
+    - grep -q 'Coverage:' test/fixtures/go-pass/.shipguard/ci/summary.md

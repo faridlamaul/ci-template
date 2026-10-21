@@ -347,7 +347,7 @@ func markExisting(ctx context.Context, base *baseTree, results []headResult, now
 	if err != nil {
 		return fmt.Errorf("create base raw dir: %w", err)
 	}
-	defer os.RemoveAll(baseRaw)
+	defer func() { _ = os.RemoveAll(baseRaw) }()
 
 	for i := range results {
 		if err := cancelled(ctx); err != nil {

@@ -1,0 +1,81 @@
+[
+  {
+    "Name": "install",
+    "Cmds": [
+      {
+        "Argv": [
+          "/tools/uv",
+          "sync",
+          "--frozen"
+        ],
+        "Shell": "",
+        "Env": {
+          "UV_PYTHON": "python3",
+          "UV_PYTHON_DOWNLOADS": "never"
+        }
+      },
+      {
+        "Argv": null,
+        "Shell": ".venv/bin/python -c 'import pytest' 2\u003e/dev/null || '/tools/uv' pip install --python .venv/bin/python pytest==9.1.1",
+        "Env": {
+          "UV_PYTHON": "python3",
+          "UV_PYTHON_DOWNLOADS": "never"
+        }
+      },
+      {
+        "Argv": null,
+        "Shell": ".venv/bin/python -c 'import coverage' 2\u003e/dev/null || '/tools/uv' pip install --python .venv/bin/python coverage==7.16.2",
+        "Env": {
+          "UV_PYTHON": "python3",
+          "UV_PYTHON_DOWNLOADS": "never"
+        }
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 60000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "lint",
+    "Cmds": null,
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "disabled in config",
+    "Timeout": 60000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "test",
+    "Cmds": [
+      {
+        "Argv": null,
+        "Shell": "make t",
+        "Env": null
+      }
+    ],
+    "JUnit": [
+      "j/*.xml"
+    ],
+    "Coverage": "c.xml",
+    "Skip": "",
+    "Timeout": 60000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "build",
+    "Cmds": [
+      {
+        "Argv": null,
+        "Shell": "make b",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 60000000000,
+    "HasAfter": false
+  }
+]

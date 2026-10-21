@@ -1,0 +1,5 @@
+ci:
+  steps:
+    lint:
+      run: ""
+      enabled: false

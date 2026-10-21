@@ -3,7 +3,7 @@ INSTALL_DIR=$(HOME)/.local/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
-.PHONY: all build install test vet fmt-check clean image-test e2e docs-check gitlab-lint publish-test bump-test
+.PHONY: all build install test vet fmt-check clean image-test e2e ci-e2e docs-check gitlab-lint publish-test bump-test
 
 all: build
 
@@ -35,6 +35,12 @@ image-test:
 e2e: image-test
 	SHIPGUARD_IMAGE=shipguard:dev go test -tags e2e -count=1 ./e2e/
 
+# Runs `shipguard ci` on the fixtures in testdata/ci inside the official language
+# images (needs Docker and network). Set CI_LANG to filter languages, for
+# example `make ci-e2e CI_LANG=go,rust`.
+ci-e2e:
+	SHIPGUARD_CI_E2E=1 SHIPGUARD_CI_E2E_LANG='$(CI_LANG)' go test -tags e2e -count=1 -timeout 60m -v -run TestCIFixtures ./e2e/
+
 # Validates every `.shipguard.yaml` snippet in README.md and docs/*.md with the real CLI.
 docs-check:
 	./scripts/docs-check.sh
@@ -52,5 +58,5 @@ bump-test:
 GITLAB_LINT_PROJECT_ID ?= 87873115
 gitlab-lint:
 	rm -rf dist/gitlab
-	./scripts/render-gitlab.sh 0.0.0 dist/gitlab
+	SHIPGUARD_BIN_SHA256_AMD64=$$(printf '0%.0s' $$(seq 64)) SHIPGUARD_BIN_SHA256_ARM64=$$(printf '1%.0s' $$(seq 64)) ./scripts/render-gitlab.sh 0.0.0 dist/gitlab
 	./scripts/gitlab-lint.sh $(GITLAB_LINT_PROJECT_ID) dist/gitlab

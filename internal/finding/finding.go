@@ -181,7 +181,7 @@ func WriteResult(path string, r Result) (err error) {
 	}
 	defer func() {
 		if err != nil {
-			os.Remove(tmp.Name())
+			_ = os.Remove(tmp.Name())
 		}
 	}()
 	_, werr := tmp.Write(append(b, '\n'))

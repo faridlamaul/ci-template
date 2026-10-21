@@ -1,0 +1,93 @@
+# shipguard build and test steps for Bitbucket Pipelines.
+#
+# Copy the rendered file attached to each GitHub release (asset name
+# build-test-pipelines.yml), not this source: the placeholders below are
+# replaced at release time with that release's version and the SHA-256 of its
+# linux archives. To pin another version, take the file from that release.
+#   https://github.com/faridlamaul/shipguard/releases
+#
+# The Go step is active; uncomment the step for your language, and keep the
+# anchor (&shipguard-ci) in a step that stays in the file, because the other
+# steps reuse it. Merge the steps into your own bitbucket-pipelines.yml.
+#
+# Each step runs in the language image you choose, so the code under test can
+# read every repository and workspace variable of the pipeline. Keep secrets in
+# secured variables. The binary is verified against the rendered SHA-256
+# before it is extracted and is run from a temp directory.
+#
+# Bitbucket collects test reports from **/test-results/**/*.xml, and
+# `shipguard ci` writes test-results/junit.xml at the clone root, so the Tests
+# tab fills without extra steps. Slim images need curl and ca-certificates.
+#
+# The image selects the toolchain: the version files of the repository
+# (.nvmrc, go.mod, ...) are compared with it and a mismatch prints a warning.
+#
+# Optional variables (set with export before the shared script line):
+#   SHIPGUARD_DIR       project directory, default .
+#   SHIPGUARD_CONFIG    config file, default .shipguard.yaml
+#   SHIPGUARD_CI_STEPS  space separated steps (lint test build), default all
+pipelines:
+  default:
+    - step:
+        name: shipguard go
+        image: golang:1.27
+        script:
+          - export SHIPGUARD_LANGUAGE=golang
+          - &shipguard-ci |
+            set -eu
+            SHIPGUARD_RELEASE="__SHIPGUARD_VERSION__"
+            SHIPGUARD_DIR=${SHIPGUARD_DIR:-.}
+            SHIPGUARD_CI_STEPS=${SHIPGUARD_CI_STEPS:-}
+            case "$(uname -m)" in
+              x86_64) arch=amd64; sha=__SHIPGUARD_BIN_SHA256_AMD64__ ;;
+              aarch64|arm64) arch=arm64; sha=__SHIPGUARD_BIN_SHA256_ARM64__ ;;
+              *) echo "shipguard: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+            esac
+            if ! command -v curl > /dev/null 2>&1; then
+              echo "shipguard: curl is missing in this image. Slim images need: apt-get update && apt-get install -y curl ca-certificates" >&2
+              exit 1
+            fi
+            case "$SHIPGUARD_CI_STEPS" in
+              *[!a-z\ ]*) echo "shipguard: steps may only hold lowercase letters and spaces" >&2; exit 1 ;;
+            esac
+            bare=${SHIPGUARD_RELEASE#v}
+            archive="shipguard_${bare}_linux_${arch}.tar.gz"
+            tmp=$(mktemp -d)
+            curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$tmp/$archive" \
+              "https://github.com/faridlamaul/shipguard/releases/download/v${bare}/${archive}"
+            (cd "$tmp" && echo "${sha}  ${archive}" | sha256sum -c -)
+            tar -xzf "$tmp/$archive" -C "$tmp" shipguard
+            rc=0
+            # Steps are validated above; the word splitting is intended.
+            # shellcheck disable=SC2086
+            "$tmp/shipguard" ci -- $SHIPGUARD_CI_STEPS || rc=$?
+            cat "${SHIPGUARD_DIR}/.shipguard/ci/summary.md" 2> /dev/null || true
+            [ "$rc" -eq 0 ] || exit "$rc"
+
+    # - step:
+    #     name: shipguard node
+    #     image: node:22
+    #     script:
+    #       - export SHIPGUARD_LANGUAGE=node
+    #       - *shipguard-ci
+    #
+    # - step:
+    #     name: shipguard python
+    #     image: python:3.13
+    #     script:
+    #       - export SHIPGUARD_LANGUAGE=python
+    #       - *shipguard-ci
+    #
+    # - step:
+    #     name: shipguard ruby
+    #     image: ruby:3.4
+    #     script:
+    #       - export SHIPGUARD_LANGUAGE=ruby
+    #       - *shipguard-ci
+    #
+    # - step:
+    #     name: shipguard rust
+    #     image: rust:1.90
+    #     script:
+    #       - export SHIPGUARD_LANGUAGE=rust
+    #       - *shipguard-ci

@@ -1,0 +1,3 @@
+ci:
+  timeouts:
+    per_step: 5us
