@@ -1,0 +1,110 @@
+spec:
+  inputs:
+    language:
+      type: string
+      options: [golang, node, python, ruby, rust]
+      description: "Language image to run in (the official Docker image name)."
+    version:
+      type: string
+      description: "Image tag, which is also the toolchain version, for example 1.26 or 22."
+    registry:
+      type: string
+      default: ""
+      description: "Registry prefix for the image, with a trailing slash, for example mirror.example.com/library/."
+    dir:
+      type: string
+      default: .
+      description: "Project directory, relative to the repository root."
+    steps:
+      type: string
+      default: ""
+      description: "Space separated steps (lint, test, build). Empty runs every configured step."
+    config:
+      type: string
+      default: .shipguard.yaml
+      description: "Path to the shipguard config file."
+    stage:
+      type: string
+      default: test
+      description: "Pipeline stage that runs the job."
+---
+# shipguard build and test job. The placeholders are rendered at release time
+# by scripts/render-gitlab.sh: the version and the SHA-256 of the linux
+# archives of that release.
+#
+# Security note: the job runs in the language image you choose, as the user
+# that image defines. It receives every CI/CD variable of the job, including
+# CI_JOB_TOKEN, so the code under test can read them. Keep secrets in
+# protected variables and do not expose them to merge request pipelines from
+# forks. This template adds no secrets and no variable beyond SHIPGUARD_*.
+#
+# Inputs reach the job only through `variables:` (with expand: false) and the
+# image name, never through `script:`. The binary is verified against the
+# rendered SHA-256 before it is extracted and is run from a temp directory.
+shipguard-ci:
+  stage: $[[ inputs.stage ]]
+  image:
+    name: $[[ inputs.registry ]]$[[ inputs.language ]]:$[[ inputs.version ]]
+    entrypoint: [""]
+  variables:
+    SHIPGUARD_RELEASE: "__SHIPGUARD_VERSION__"
+    SHIPGUARD_DIR:
+      value: "$[[ inputs.dir ]]"
+      expand: false
+    SHIPGUARD_CONFIG:
+      value: "$[[ inputs.config ]]"
+      expand: false
+    SHIPGUARD_LANGUAGE:
+      value: "$[[ inputs.language ]]"
+      expand: false
+    SHIPGUARD_TOOLCHAIN:
+      value: "$[[ inputs.version ]]"
+      expand: false
+    SHIPGUARD_CI_STEPS:
+      value: "$[[ inputs.steps ]]"
+      expand: false
+  script:
+    - |
+      set -eu
+      case "$(uname -m)" in
+        x86_64) arch=amd64; sha=__SHIPGUARD_BIN_SHA256_AMD64__ ;;
+        aarch64|arm64) arch=arm64; sha=__SHIPGUARD_BIN_SHA256_ARM64__ ;;
+        *) echo "shipguard: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+      esac
+      if ! command -v curl > /dev/null 2>&1; then
+        echo "shipguard: curl is missing in this image. Slim images need: apt-get update && apt-get install -y curl ca-certificates" >&2
+        exit 1
+      fi
+      case "$SHIPGUARD_CI_STEPS" in
+        *[!a-z\ ]*) echo "shipguard: steps may only hold lowercase letters and spaces" >&2; exit 1 ;;
+      esac
+      bare=${SHIPGUARD_RELEASE#v}
+      archive="shipguard_${bare}_linux_${arch}.tar.gz"
+      tmp=$(mktemp -d)
+      curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$tmp/$archive" \
+        "https://github.com/faridlamaul/shipguard/releases/download/v${bare}/${archive}"
+      (cd "$tmp" && echo "${sha}  ${archive}" | sha256sum -c -)
+      tar -xzf "$tmp/$archive" -C "$tmp" shipguard
+      rc=0
+      # Steps are validated above; the word splitting is intended.
+      # shellcheck disable=SC2086
+      "$tmp/shipguard" ci -- $SHIPGUARD_CI_STEPS || rc=$?
+      # The coverage regex reads the job log, so print the summary on failure too.
+      cat "${SHIPGUARD_DIR}/.shipguard/ci/summary.md" 2> /dev/null || true
+      exit "$rc"
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - $[[ inputs.dir ]]/.shipguard/ci/
+    reports:
+      junit: $[[ inputs.dir ]]/.shipguard/ci/test-results/junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: $[[ inputs.dir ]]/.shipguard/ci/coverage.xml
+  coverage: '/Coverage: (\d+(?:\.\d+)?)%/'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "schedule"

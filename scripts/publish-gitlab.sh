@@ -133,6 +133,11 @@ cp "$root/README.md" "$root/LICENSE" "$work/"
 cp "$root/adapters/gitlab/publish/.gitlab-ci.yml" "$work/.gitlab-ci.yml"
 # The publish pipeline includes the smoke test from test/.gitlab-ci.yml.
 cp "$root/adapters/gitlab/test/.gitlab-ci.yml" "$work/test/.gitlab-ci.yml"
+# The component smoke test runs on a copy of the Go pass fixture.
+cp "$root/adapters/gitlab/test/ci.gitlab-ci.yml" "$work/test/ci.gitlab-ci.yml"
+rm -rf "$work/test/fixtures"
+mkdir -p "$work/test/fixtures/go-pass"
+cp "$root"/testdata/ci/go/pass/* "$work/test/fixtures/go-pass/"
 
 first=${files# }
 first=${first%% *}
@@ -149,7 +154,7 @@ first=${first%% *}
   printf '```\n'
 } > "$work/INTEGRITY.md"
 
-g -C "$work" add -A -- templates test/.gitlab-ci.yml README.md LICENSE .gitlab-ci.yml INTEGRITY.md
+g -C "$work" add -A -- templates test/.gitlab-ci.yml test/ci.gitlab-ci.yml test/fixtures README.md LICENSE .gitlab-ci.yml INTEGRITY.md
 g -C "$work" commit --quiet --allow-empty -m "release $version"
 g -C "$work" tag -a -m "release $version" "$version"
 # --atomic: the branch and the tag land together or not at all. Without

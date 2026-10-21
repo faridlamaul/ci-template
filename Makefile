@@ -58,5 +58,5 @@ bump-test:
 GITLAB_LINT_PROJECT_ID ?= 87873115
 gitlab-lint:
 	rm -rf dist/gitlab
-	./scripts/render-gitlab.sh 0.0.0 dist/gitlab
+	SHIPGUARD_BIN_SHA256_AMD64=$$(printf '0%.0s' $$(seq 64)) SHIPGUARD_BIN_SHA256_ARM64=$$(printf '1%.0s' $$(seq 64)) ./scripts/render-gitlab.sh 0.0.0 dist/gitlab
 	./scripts/gitlab-lint.sh $(GITLAB_LINT_PROJECT_ID) dist/gitlab

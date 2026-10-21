@@ -7,6 +7,9 @@
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+# ci.yml carries the archive hashes; any 64 lowercase hex digits render.
+export SHIPGUARD_BIN_SHA256_AMD64=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export SHIPGUARD_BIN_SHA256_ARM64=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -70,7 +73,10 @@ for f in README.md LICENSE; do
 done
 if cmp -s "$check/.gitlab-ci.yml" "$root/adapters/gitlab/publish/.gitlab-ci.yml"; then pass ".gitlab-ci.yml copied"; else fail ".gitlab-ci.yml not copied"; fi
 if cmp -s "$check/test/.gitlab-ci.yml" "$root/adapters/gitlab/test/.gitlab-ci.yml"; then pass "test/.gitlab-ci.yml copied"; else fail "test/.gitlab-ci.yml not copied"; fi
-hash=$(awk '{print $2}' "$work/integrity-1.2.3.txt")
+if cmp -s "$check/test/ci.gitlab-ci.yml" "$root/adapters/gitlab/test/ci.gitlab-ci.yml"; then pass "test/ci.gitlab-ci.yml copied"; else fail "test/ci.gitlab-ci.yml not copied"; fi
+if cmp -s "$check/test/fixtures/go-pass/go.mod" "$root/testdata/ci/go/pass/go.mod"; then pass "go-pass fixture copied"; else fail "go-pass fixture not copied"; fi
+if cmp -s "$check/templates/ci.yml" "$work/dist-1.2.3/ci.yml"; then pass "templates/ci.yml rendered"; else fail "templates/ci.yml differs"; fi
+hash=$(awk '$1 ~ /\/scan\.yml$/ {print $2}' "$work/integrity-1.2.3.txt")
 if grep -qx "templates/scan.yml $hash" "$check/INTEGRITY.md"; then pass "INTEGRITY.md has the hash line"; else fail "INTEGRITY.md: $(cat "$check/INTEGRITY.md" 2> /dev/null)"; fi
 if grep -qF 'integrity: sha256-' "$check/INTEGRITY.md"; then pass "INTEGRITY.md has the usage note"; else fail "INTEGRITY.md usage note"; fi
 no_token "$work/out1"
