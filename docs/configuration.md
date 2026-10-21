@@ -50,6 +50,8 @@ In words: fail on any secret, on high or critical SAST findings, on high or crit
 
 ## Keys
 
+The file holds a single YAML document; a second document with content after a `---` separator is a config error (a trailing empty `---` is fine). Every glob in `paths.exclude` and `exceptions[].path` must be a valid doublestar pattern, or the config is rejected (exit 2).
+
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `version` | integer | `1` | Must be `1`. |

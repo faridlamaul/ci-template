@@ -258,3 +258,59 @@ func TestSASTDefaultExcludes(t *testing.T) {
 		t.Fatalf("unset: %+v err=%v", c.Scanners.SAST, err)
 	}
 }
+
+func TestParseRejectsMultipleDocuments(t *testing.T) {
+	_, err := Parse([]byte("mode: enforce\n---\nmode: audit\n"))
+	if !errors.Is(err, ErrConfig) || !strings.Contains(err.Error(), "multiple YAML documents are not supported") {
+		t.Fatalf("err = %v, want multiple-documents ErrConfig", err)
+	}
+}
+
+// A later document that is empty (a trailing "---", comments only or null) is
+// accepted; one with content is rejected.
+func TestParseDocumentMarkers(t *testing.T) {
+	for _, in := range []string{
+		"---\nmode: audit\n",
+		"mode: audit\n---\n",
+		"mode: audit\n---\n# comment\n",
+		"mode: audit\n---\n~\n",
+		"mode: audit\n---\n---\n",
+	} {
+		c, err := Parse([]byte(in))
+		if err != nil || c.Mode != "audit" {
+			t.Errorf("Parse(%q) mode = %q, err = %v; want audit", in, c.Mode, err)
+		}
+	}
+	for _, in := range []string{
+		"mode: audit\n---\npolicy: {}\n",
+		"mode: audit\n---\n- a\n",
+		"mode: audit\n---\nfoo\n",
+		"mode: audit\n---\n---\npolicy: {}\n",
+	} {
+		if _, err := Parse([]byte(in)); !errors.Is(err, ErrConfig) || !strings.Contains(err.Error(), "multiple YAML documents are not supported") {
+			t.Errorf("Parse(%q) err = %v; want multiple-documents ErrConfig", in, err)
+		}
+	}
+}
+
+func TestParseRejectsInvalidGlobs(t *testing.T) {
+	cases := map[string]string{
+		"paths:\n  exclude: [\"web/[a\"]\n":                                                          "paths.exclude[0]",
+		"paths:\n  exclude: [\"ok/\", \"{a,b\"]\n":                                                   "paths.exclude[1]",
+		"exceptions:\n  - id: CVE-1\n    path: \"src/[x\"\n    reason: r\n    expires: 2030-01-01\n": "exceptions[0]",
+	}
+	for in, key := range cases {
+		_, err := Parse([]byte(in))
+		if !errors.Is(err, ErrConfig) || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "invalid glob") {
+			t.Errorf("Parse(%q) err = %v; want invalid glob naming %s", in, err, key)
+		}
+	}
+}
+
+func TestParseAcceptsValidGlobs(t *testing.T) {
+	in := "paths:\n  exclude: [\"vendor/\", \"[x/\", \"**/fixtures/**\", \"*.min.js\"]\n" +
+		"exceptions:\n  - id: CVE-1\n    path: \"src/**/*.go\"\n    reason: r\n    expires: 2030-01-01\n"
+	if _, err := Parse([]byte(in)); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
