@@ -128,7 +128,9 @@ runs:
           echo "::error::unexpected language from shipguard ci detect"
           exit 2
         fi
-        if ! [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+        # A single line of version characters or range operators (">=18 <21"),
+        # never starting with "-". It only reaches GITHUB_OUTPUT and setup-* inputs.
+        if [ -z "$version" ] || [[ "$version" == -* ]] || ! [[ "$version" =~ ^[A-Za-z0-9._+\<\>=^~*|\ -]+$ ]]; then
           echo "::error::shipguard ci detect returned an empty or invalid toolchain version; set the version input"
           exit 2
         fi
