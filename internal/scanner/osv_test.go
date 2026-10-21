@@ -518,3 +518,15 @@ func TestOSVCompareVersions(t *testing.T) {
 		}
 	}
 }
+
+// TestOSVExit1WithoutFindingsIsError: osv-scanner exits 1 only when it
+// reports vulnerabilities, so a well-formed report with none is inconsistent
+// and must not pass as clean.
+func TestOSVExit1WithoutFindingsIsError(t *testing.T) {
+	noSleep(t)
+	calls := 0
+	s := NewOSV(osvRunner(t, []byte(`{"results":[]}`), 1, &calls, nil))
+	if _, err := s.Scan(context.Background(), Target{Dir: t.TempDir(), RawDir: t.TempDir()}); err == nil {
+		t.Fatal("exit 1 with an empty report passed as clean")
+	}
+}

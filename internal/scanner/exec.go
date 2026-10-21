@@ -38,6 +38,21 @@ func ExecRunner() Runner {
 	}
 }
 
+// checkReport fails a report that is empty or the literal null when the
+// scanner exited non-zero: a non-zero exit (opengrep and osv-scanner exit 1 on
+// findings) must come with findings, so such a report was not really written.
+// With exit 0 a null report means no findings and is left to the parser; an
+// empty one always fails to parse.
+func checkReport(tool string, raw []byte, code int) error {
+	if code == 0 {
+		return nil
+	}
+	if b := bytes.TrimSpace(raw); len(b) == 0 || bytes.Equal(b, []byte("null")) {
+		return fmt.Errorf("%s exited with code %d but wrote no report", tool, code)
+	}
+	return nil
+}
+
 // Retry calls fn up to attempts times, sleeping 1s, 2s, 4s, ... between
 // attempts (at least once, even when attempts <= 0). It stops early when ctx
 // is done, including during the sleep, and returns the last error.
