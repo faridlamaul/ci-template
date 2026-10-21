@@ -53,7 +53,7 @@ type sarifResult struct {
 	Message             sarifText         `json:"message"`
 	Locations           []sarifLocation   `json:"locations,omitempty"`
 	PartialFingerprints map[string]string `json:"partialFingerprints"`
-	Properties          map[string]string `json:"properties"`
+	Properties          map[string]string `json:"properties,omitempty"`
 }
 
 type sarifLocation struct {
@@ -123,7 +123,9 @@ func WriteSARIF(w io.Writer, r finding.Result, version string) error {
 			Level:               sarifLevel(f.Severity),
 			Message:             sarifText{Text: orID(f.Message, f.ID)},
 			PartialFingerprints: map[string]string{sarifFingerprint: f.Fingerprint},
-			Properties:          map[string]string{"status": string(f.Status)},
+		}
+		if f.Status != "" {
+			res.Properties = map[string]string{"status": string(f.Status)}
 		}
 		if f.File != "" {
 			res.Locations = []sarifLocation{{PhysicalLocation: sarifPhysical{

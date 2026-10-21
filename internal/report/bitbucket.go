@@ -85,7 +85,10 @@ func (c CodeInsights) Publish(ctx context.Context, r finding.Result, d policy.De
 	}
 	client := c.HTTP
 	if client == nil {
-		client = c.newClient()
+		var err error
+		if client, err = c.newClient(); err != nil {
+			return err
+		}
 	}
 	reportURL := fmt.Sprintf("%s/repositories/%s/commit/%s/reports/%s", base, c.Repo, c.Commit, reportKey)
 
@@ -98,11 +101,11 @@ func (c CodeInsights) Publish(ctx context.Context, r finding.Result, d policy.De
 	details := firstLine(Summary(r, d, 0))
 	if more > 0 {
 		note := fmt.Sprintf(" …and %d more findings in .shipguard/findings.json", more)
-		details = cutRunes(details, maxDetails-len(note)) + note
+		details = truncateBytes(details, maxDetails-len(note)) + note
 	}
 	body := ciReport{
 		Title:      reportKey,
-		Details:    cutRunes(details, maxDetails),
+		Details:    truncateBytes(details, maxDetails),
 		ReportType: "SECURITY",
 		Reporter:   reportKey,
 		Result:     result,
@@ -123,14 +126,19 @@ func (c CodeInsights) Publish(ctx context.Context, r finding.Result, d policy.De
 	return nil
 }
 
-func (c CodeInsights) newClient() *http.Client {
+// newClient builds the default client. A proxy that is not an http(s) URL
+// with a host is an ErrUpload rather than silently ignored; the error does not
+// echo the value, which may carry credentials.
+func (c CodeInsights) newClient() (*http.Client, error) {
 	tr := &http.Transport{}
 	if c.Proxy != "" && c.Token == "" {
-		if u, err := url.Parse(c.Proxy); err == nil {
-			tr.Proxy = http.ProxyURL(u)
+		u, err := url.Parse(c.Proxy)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return nil, fmt.Errorf("%w: invalid SHIPGUARD_BITBUCKET_PROXY: want an http(s)://host:port URL or \"none\"", ErrUpload)
 		}
+		tr.Proxy = http.ProxyURL(u)
 	}
-	return &http.Client{Timeout: 30 * time.Second, Transport: tr}
+	return &http.Client{Timeout: 30 * time.Second, Transport: tr}, nil
 }
 
 // send marshals body and issues the request. Errors never contain the token.
@@ -201,9 +209,9 @@ func annotations(r finding.Result, d policy.Decision) ([]ciAnnotation, int) {
 	out := make([]ciAnnotation, 0, len(fs))
 	for _, f := range fs {
 		out = append(out, ciAnnotation{
-			ExternalID:     cutRunes(f.Fingerprint, maxExternalID),
+			ExternalID:     truncateBytes(f.Fingerprint, maxExternalID),
 			AnnotationType: "VULNERABILITY",
-			Summary:        cutRunes(strings.TrimSpace(f.ID+" "+f.Message), maxAnnotationSummary),
+			Summary:        truncateBytes(strings.TrimSpace(f.ID+" "+f.Message), maxAnnotationSummary),
 			Severity:       ciSeverity(f.Severity),
 			Path:           f.File,
 			Line:           f.Line,
@@ -229,8 +237,8 @@ func firstLine(s string) string {
 	return strings.TrimSpace(strings.TrimLeft(line, "# "))
 }
 
-// cutRunes truncates s to at most n bytes without splitting a rune.
-func cutRunes(s string, n int) string {
+// truncateBytes truncates s to at most n bytes without splitting a rune.
+func truncateBytes(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}

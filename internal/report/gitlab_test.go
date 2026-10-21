@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,8 +57,19 @@ func glRead(t *testing.T, dir, name string) map[string]any {
 	return doc
 }
 
+var (
+	glSchemaMu    sync.Mutex
+	glSchemaCache = map[string]*jsonschema.Schema{}
+)
+
+// glSchema compiles a vendored schema once per test binary.
 func glSchema(t *testing.T, file string) *jsonschema.Schema {
 	t.Helper()
+	glSchemaMu.Lock()
+	defer glSchemaMu.Unlock()
+	if sch, ok := glSchemaCache[file]; ok {
+		return sch
+	}
 	raw, err := os.ReadFile(filepath.Join("testdata", "gitlab", file))
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +86,7 @@ func glSchema(t *testing.T, file string) *jsonschema.Schema {
 	if err != nil {
 		t.Fatal(err)
 	}
+	glSchemaCache[file] = sch
 	return sch
 }
 
@@ -201,5 +214,36 @@ func TestGitLabDeterministic(t *testing.T) {
 		if string(x) != string(y) {
 			t.Fatalf("%s differs", file)
 		}
+	}
+}
+
+// TestGitLabLicenseIdentifierType: the schema leaves identifier types
+// analyzer-dependent; a denied license is identified as a license, not as a
+// shipguard rule.
+func TestGitLabLicenseIdentifierType(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteGitLab(dir, glSample(), "v1", glNow); err != nil {
+		t.Fatal(err)
+	}
+	doc := glRead(t, dir, "gl-dependency-scanning-report.json")
+	types := map[string]string{}
+	for _, v := range doc["vulnerabilities"].([]any) {
+		id := v.(map[string]any)["identifiers"].([]any)[0].(map[string]any)
+		types[id["value"].(string)] = id["type"].(string)
+	}
+	if types["license:GPL-3.0"] != "license" || types["MAL-2024-1"] != "shipguard_rule" || types["GHSA-xxxx-yyyy-zzzz"] != "ghsa" {
+		t.Fatalf("identifier types = %v", types)
+	}
+	if err := glSchema(t, glFiles["gl-dependency-scanning-report.json"]).Validate(doc); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGitLabSchemaCompiledOnce: each vendored schema is compiled once per test
+// binary and reused.
+func TestGitLabSchemaCompiledOnce(t *testing.T) {
+	file := glFiles["gl-sast-report.json"]
+	if a, b := glSchema(t, file), glSchema(t, file); a != b {
+		t.Fatal("schema compiled twice")
 	}
 }
