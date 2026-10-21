@@ -1,8 +1,6 @@
 # GitHub: .github/workflows/security.yml
 #
-# Replace vX.Y.Z with a shipguard release tag. Until the first release ships,
-# pin a commit SHA of faridlamaul/shipguard instead; the scan then builds the
-# image from source (slower, but exact).
+# Replace vX.Y.Z with a shipguard release tag, or pin its commit SHA.
 name: Security
 
 on:

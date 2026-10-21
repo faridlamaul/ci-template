@@ -21,11 +21,11 @@ On a pull request only the findings the PR introduces can fail the gate. On the 
 |---|---|
 | Go CLI (`scan`, `gate`, `report`, `run`) | done |
 | GitHub adapter (reusable workflow and composite action) | done |
-| GitLab component | in development, not yet released |
-| Bitbucket pipe | in development, not yet released |
-| Image and version tags | not published yet; there is no release |
+| GitLab component (CI/CD Catalog) | released |
+| Bitbucket pipe | released |
+| Image `ghcr.io/faridlamaul/shipguard` (signed, with provenance) | released |
 
-Until the first release, the docs write `vX.Y.Z` for the version you will use. On GitHub you can already pin a commit SHA of this repository; the workflow then builds the image from source.
+The docs write `vX.Y.Z` for the release you pin (GitLab: `X.Y.Z`, no `v`). See [Releases](https://github.com/faridlamaul/shipguard/releases) for the latest version.
 
 ## Quick start (GitHub)
 
@@ -70,8 +70,8 @@ exceptions:
 |---|---|
 | [docs/configuration.md](docs/configuration.md) | Every `.shipguard.yaml` key, defaults, exceptions, PR policy, ignored scanner config, exit codes, environment variables |
 | [docs/github.md](docs/github.md) | Inputs, permissions, hardening, tier notes |
-| [docs/gitlab.md](docs/gitlab.md) | Planned component usage |
-| [docs/bitbucket.md](docs/bitbucket.md) | Planned pipe usage |
+| [docs/gitlab.md](docs/gitlab.md) | Component inputs, `include: remote` with integrity, hardening |
+| [docs/bitbucket.md](docs/bitbucket.md) | Pipe variables, schedules, Code Insights, hardening |
 | [examples/](examples/) | Ready-to-copy pipeline files |
 
 ## Exit codes

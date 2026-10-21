@@ -1,7 +1,5 @@
 # shipguard on Bitbucket
 
-> **Status: adapter in development; not yet released.** The Bitbucket pipe is not built yet, and the image and version tags do not exist. This page describes the planned usage. It will be confirmed when the first release ships.
-
 On Bitbucket the shipguard image is the pipe. `vX.Y.Z` stands for the release tag.
 
 ## Quick start

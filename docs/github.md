@@ -2,7 +2,7 @@
 
 shipguard ships as a reusable workflow and as a composite action. The reusable workflow is the one to use: it checks out the full history, runs the scan in the shipguard image, writes the job summary and uploads SARIF to Code Scanning.
 
-Release note: no shipguard release has been published yet, so the image and the version tags do not exist. This page writes `vX.Y.Z` for the tag you will use. Until the first release, pin a commit SHA of `faridlamaul/shipguard`; the workflow then builds the image from source, which is exact but slower.
+This page writes `vX.Y.Z` for the release tag you pin; see [Releases](https://github.com/faridlamaul/shipguard/releases). Pinning a commit SHA of `faridlamaul/shipguard` also works; the workflow then builds the image from source, which is exact but slower.
 
 ## Quick start
 

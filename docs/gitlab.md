@@ -1,8 +1,6 @@
 # shipguard on GitLab
 
-> **Status: adapter in development; not yet released.** The job template exists in the repository (`adapters/gitlab/scan.yml`), but the image, the component and the version tags are not published yet. This page describes the planned usage. It will be confirmed when the first release ships.
-
-The adapter will be a CI/CD component that runs `shipguard run` in the shipguard image, then publishes the reports as job artifacts. `X.Y.Z` stands for the release version. GitLab tags have no `v` prefix.
+The adapter is a CI/CD component, listed in the [GitLab CI/CD Catalog](https://gitlab.com/explore/catalog/faridlamaul/shipguard), that runs `shipguard run` in the shipguard image, then publishes the reports as job artifacts. `X.Y.Z` stands for the release version. GitLab tags have no `v` prefix.
 
 ## Quick start
 
