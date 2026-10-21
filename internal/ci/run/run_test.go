@@ -209,9 +209,12 @@ func TestRunJUnitCoverageAfterEnv(t *testing.T) {
 }
 
 func TestExitCode(t *testing.T) {
-	p := StepResult{Status: "passed"}
-	f := StepResult{Status: "failed"}
-	s := StepResult{Status: "skipped"}
+	p := StepResult{Name: "test", Status: "passed"}
+	f := StepResult{Name: "test", Status: "failed"}
+	s := StepResult{Name: "lint", Status: "skipped"}
+	ip := StepResult{Name: "install", Status: "passed"}
+	inf := StepResult{Name: "install", Status: "failed"}
+	is := StepResult{Name: "test", Status: "skipped", Reason: "install failed"}
 	tests := []struct {
 		name string
 		rs   []StepResult
@@ -225,6 +228,10 @@ func TestExitCode(t *testing.T) {
 		{"empty", nil, false, 2},
 		{"interrupted", []StepResult{p, f}, true, 2},
 		{"interrupted pass", []StepResult{p}, true, 2},
+		{"install+pass", []StepResult{ip, p, s}, false, 0},
+		{"only install passed", []StepResult{ip, s, s}, false, 2},
+		{"install alone requested", []StepResult{ip}, false, 0},
+		{"install failed", []StepResult{inf, is, is}, false, 1},
 	}
 	for _, tc := range tests {
 		if got := ExitCode(tc.rs, tc.intr); got != tc.want {

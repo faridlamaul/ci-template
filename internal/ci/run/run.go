@@ -175,7 +175,10 @@ func Interrupted(rs []StepResult) bool {
 	return false
 }
 
-// ExitCode implements P7: interrupted => 2; any failed => 1; no passed => 2; else 0.
+// ExitCode implements P7: interrupted => 2; any failed => 1; no passed => 2;
+// else 0. A passing install does not count as a pass when other steps were
+// requested: a run where every requested step was skipped is exit 2. It
+// counts only when install is the sole step (`shipguard ci install`).
 func ExitCode(rs []StepResult, interrupted bool) int {
 	if interrupted {
 		return 2
@@ -186,7 +189,9 @@ func ExitCode(rs []StepResult, interrupted bool) int {
 		case "failed":
 			return 1
 		case "passed":
-			passed = true
+			if r.Name != "install" || len(rs) == 1 {
+				passed = true
+			}
 		}
 	}
 	if !passed {
