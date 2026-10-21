@@ -137,6 +137,40 @@ ok="RENDERED_DIR=$work/dist-u INTEGRITY_FILE=$work/integrity-u.txt"
 printf 'templates/scan.yml sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n' > "$work/integrity-bad.txt"
 usage "integrity mismatch" VERSION=1.2.3 GITLAB_PUBLISH_TOKEN="$token" RENDERED_DIR="$work/dist-u" INTEGRITY_FILE="$work/integrity-bad.txt"
 
+# 5. render-gitlab.sh with binary hashes: a temporary root (script + templates)
+# holds a ci.yml template with the placeholders; scan.yml has none.
+rr=$work/render-root
+mkdir -p "$rr/scripts" "$rr/adapters/gitlab"
+cp "$root/scripts/render-gitlab.sh" "$rr/scripts/"
+cp "$root/adapters/gitlab/scan.yml" "$rr/adapters/gitlab/"
+cat > "$rr/adapters/gitlab/ci.yml" << 'EOF'
+image: ghcr.io/faridlamaul/shipguard:__SHIPGUARD_VERSION__
+amd64: __SHIPGUARD_BIN_SHA256_AMD64__
+arm64: __SHIPGUARD_BIN_SHA256_ARM64__
+EOF
+h1=$(printf 'a%.0s' $(seq 64))
+h2=$(printf '1%.0s' $(seq 64))
+render_rc() { # render_rc NAME EXPECTED_RC ENV...
+  name=$1 want=$2
+  shift 2
+  set +e
+  env "$@" "$rr/scripts/render-gitlab.sh" 1.2.3 "$work/dist-r" > "$work/render.out" 2>&1
+  rc=$?
+  set -e
+  if [ "$rc" = "$want" ]; then pass "$name exits $want"; else fail "$name exited $rc: $(cat "$work/render.out")"; fi
+}
+render_rc "render without hashes" 2 -u SHIPGUARD_BIN_SHA256_AMD64 -u SHIPGUARD_BIN_SHA256_ARM64
+render_rc "render with one hash" 2 -u SHIPGUARD_BIN_SHA256_ARM64 SHIPGUARD_BIN_SHA256_AMD64="$h1"
+render_rc "render with short hash" 2 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64=abc
+render_rc "render with uppercase hash" 2 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$(printf 'A%.0s' $(seq 64))"
+render_rc "render with both hashes" 0 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$h2"
+if grep -qx "amd64: $h1" "$work/dist-r/ci.yml" && grep -qx "arm64: $h2" "$work/dist-r/ci.yml"; then pass "ci.yml has both hashes"; else fail "ci.yml: $(cat "$work/dist-r/ci.yml")"; fi
+if grep -q '__SHIPGUARD_' "$work/dist-r/ci.yml" "$work/dist-r/scan.yml"; then fail "placeholder left"; else pass "no placeholder left"; fi
+rm "$rr/adapters/gitlab/ci.yml"
+render_rc "render without binary placeholders needs no hashes" 0 -u SHIPGUARD_BIN_SHA256_AMD64 -u SHIPGUARD_BIN_SHA256_ARM64
+printf 'x: __SHIPGUARD_VERSION__ __SHIPGUARD_BIN_SHA256_MIPS__\n' > "$rr/adapters/gitlab/ci.yml"
+render_rc "render with an unknown placeholder" 1 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$h2"
+
 if [ "$fails" -ne 0 ]; then
   echo "publish-gitlab-test: $fails failure(s)" >&2
   exit 1

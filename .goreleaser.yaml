@@ -1,0 +1,47 @@
+version: 2
+
+project_name: shipguard
+
+builds:
+  - id: shipguard
+    main: ./cmd/shipguard
+    binary: shipguard
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [linux]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    name_template: "shipguard_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# Keyless signature of checksums.txt; the GitHub action verifies it with
+# checksums.txt.sigstore.json before it trusts any archive hash.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+# shiptag writes the release notes and creates the release; GoReleaser only
+# appends the archives, checksums and signature bundle to it.
+changelog:
+  disable: true
+
+release:
+  mode: append

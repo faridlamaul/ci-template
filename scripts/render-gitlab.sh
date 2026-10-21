@@ -1,6 +1,9 @@
 #!/bin/sh
 # Renders adapters/gitlab/*.yml into an output directory, replacing the single
-# placeholder __SHIPGUARD_VERSION__ with v<VERSION>.
+# placeholder __SHIPGUARD_VERSION__ with v<VERSION>. Templates that download the
+# binary also carry __SHIPGUARD_BIN_SHA256_AMD64__ and __SHIPGUARD_BIN_SHA256_ARM64__;
+# when any template does, SHIPGUARD_BIN_SHA256_AMD64 and SHIPGUARD_BIN_SHA256_ARM64
+# (64 lowercase hex) must be set, else exit 2.
 #
 # Usage: scripts/render-gitlab.sh VERSION [OUT_DIR]   (VERSION is X.Y.Z, no "v")
 # Prints "<file> sha256-<base64>" for each rendered file: the value for the
@@ -27,6 +30,23 @@ if [ "$bad" = 1 ]; then
   exit 2
 fi
 
+need_hash=0
+for src in "$root"/adapters/gitlab/*.yml; do
+  if [ -f "$src" ] && grep -q '__SHIPGUARD_BIN_SHA256_' "$src"; then
+    need_hash=1
+  fi
+done
+amd64=${SHIPGUARD_BIN_SHA256_AMD64:-}
+arm64=${SHIPGUARD_BIN_SHA256_ARM64:-}
+if [ "$need_hash" = 1 ]; then
+  for pair in "AMD64:$amd64" "ARM64:$arm64"; do
+    if ! printf '%s' "${pair#*:}" | grep -Eq '^[0-9a-f]{64}$'; then
+      echo "render-gitlab: SHIPGUARD_BIN_SHA256_${pair%%:*} must be 64 lowercase hex characters" >&2
+      exit 2
+    fi
+  done
+fi
+
 for src in "$root"/adapters/gitlab/*.yml; do
   if [ -f "$src" ] && ! grep -q '__SHIPGUARD_VERSION__' "$src"; then
     echo "render-gitlab: placeholder missing in $src" >&2
@@ -39,8 +59,10 @@ rendered=
 for src in "$root"/adapters/gitlab/*.yml; do
   [ -f "$src" ] || continue
   dst=$out/$(basename "$src")
-  sed "s/__SHIPGUARD_VERSION__/v$version/g" "$src" > "$dst"
-  if grep -q '__SHIPGUARD_VERSION__' "$dst"; then
+  sed -e "s/__SHIPGUARD_VERSION__/v$version/g" \
+    -e "s/__SHIPGUARD_BIN_SHA256_AMD64__/$amd64/g" \
+    -e "s/__SHIPGUARD_BIN_SHA256_ARM64__/$arm64/g" "$src" > "$dst"
+  if grep -Eq '__SHIPGUARD_(VERSION|BIN_SHA256_[A-Z0-9]+)__' "$dst"; then
     echo "render-gitlab: placeholder left in $dst" >&2
     exit 1
   fi

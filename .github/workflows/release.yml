@@ -158,12 +158,68 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The static Linux binaries `shipguard ci` runs from in the GitLab and
+  # Bitbucket templates (hash rendered at release) and in the GitHub action
+  # (checksums.txt verified with its cosign bundle). shiptag already created the
+  # release, so GoReleaser appends the assets. Prereleases get assets too.
+  binaries:
+    name: Binaries
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+    outputs:
+      sha256_amd64: ${{ steps.hashes.outputs.sha256_amd64 }}
+      sha256_arm64: ${{ steps.hashes.outputs.sha256_arm64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.version }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Build, sign and upload archives
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The major tag (v0) can point at the same commit; pin the release tag.
+          GORELEASER_CURRENT_TAG: ${{ needs.release.outputs.version }}
+
+      - id: hashes
+        name: Read the archive hashes
+        env:
+          TAG: ${{ needs.release.outputs.version }}
+        run: |
+          for arch in amd64 arm64; do
+            file="shipguard_${TAG#v}_linux_${arch}.tar.gz"
+            hash=$(awk -v f="$file" '$2 == f { print $1 }' dist/checksums.txt)
+            if ! printf '%s' "$hash" | grep -Eq '^[0-9a-f]{64}$'; then
+              echo "::error::no valid sha256 for ${file} in dist/checksums.txt"
+              exit 1
+            fi
+            echo "sha256_${arch}=${hash}" >> "$GITHUB_OUTPUT"
+          done
+
   # Publishes the rendered templates to gitlab.com/faridlamaul/shipguard; its
   # pipeline smoke-tests them and releases the tag to the CI/CD Catalog.
   # GitLab versions are X.Y.Z only, so prereleases are not published there.
   gitlab:
     name: GitLab component
-    needs: [release, image]
+    needs: [release, image, binaries]
     if: needs.release.outputs.released == 'true' && !contains(needs.release.outputs.version, '-')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -178,6 +234,8 @@ jobs:
       - name: Render templates
         env:
           TAG: ${{ needs.release.outputs.version }}
+          SHIPGUARD_BIN_SHA256_AMD64: ${{ needs.binaries.outputs.sha256_amd64 }}
+          SHIPGUARD_BIN_SHA256_ARM64: ${{ needs.binaries.outputs.sha256_arm64 }}
         run: |
           mkdir -p dist
           ./scripts/render-gitlab.sh "${TAG#v}" dist/gitlab > dist/integrity.txt
