@@ -24,3 +24,9 @@ exceptions:
     path: Dockerfile
     reason: "GitHub Docker actions and CI job images need root to write to the workspace"
     expires: 2027-06-30
+  # shipguard ci runs the repository's own ci.steps.*.run commands through
+  # sh -c by design: they are the repository's code, like its Makefile.
+  - id: shipguard.go.command-injection
+    path: internal/ci/run/run.go
+    reason: "Runs repository-defined ci.steps.*.run commands via sh -c by design (shipguard ci)"
+    expires: 2027-06-30
