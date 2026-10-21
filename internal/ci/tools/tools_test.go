@@ -99,8 +99,8 @@ func tgz(t *testing.T, es ...entry) []byte {
 			}
 		}
 	}
-	tw.Close()
-	gz.Close()
+	_ = tw.Close()
+	_ = gz.Close()
 	return buf.Bytes()
 }
 
@@ -115,7 +115,7 @@ func setup(t *testing.T, payload []byte, handler http.HandlerFunc) (*Cache, Tool
 			handler(w, r)
 			return
 		}
-		w.Write(payload)
+		_, _ = w.Write(payload)
 	}))
 	t.Cleanup(srv.Close)
 	c := &Cache{Dir: filepath.Join(t.TempDir(), "tools"), Arch: "amd64", Client: srv.Client(), Sleep: func(time.Duration) {}}
@@ -152,8 +152,8 @@ func TestEnsureZipAndRawAndGlob(t *testing.T) {
 	var zb bytes.Buffer
 	zw := zip.NewWriter(&zb)
 	w, _ := zw.Create("bun-linux-x64-musl/bun")
-	w.Write([]byte("bin"))
-	zw.Close()
+	_, _ = w.Write([]byte("bin"))
+	_ = zw.Close()
 	c, tool, _ := setup(t, zb.Bytes(), nil)
 	tool.Archive = "zip"
 	tool.Bin = "*/bun"
@@ -189,7 +189,7 @@ func TestEnsureChecksumMismatch(t *testing.T) {
 func assertEmpty(t *testing.T, dir string) {
 	t.Helper()
 	var left []string
-	filepath.Walk(dir, func(p string, i os.FileInfo, err error) error {
+	_ = filepath.Walk(dir, func(p string, i os.FileInfo, err error) error {
 		if err == nil && p != dir {
 			left = append(left, p)
 		}
@@ -219,7 +219,7 @@ func TestEnsureRetries(t *testing.T) {
 			http.Error(w, "boom", 500)
 			return
 		}
-		w.Write(payload)
+		_, _ = w.Write(payload)
 	})
 	var sleeps int
 	c.Sleep = func(time.Duration) { sleeps++ }
@@ -259,9 +259,9 @@ func TestEnsureZipPathTraversal(t *testing.T) {
 	zw := zip.NewWriter(&zb)
 	for _, n := range []string{"../x", "demo-1.2.3/demo"} {
 		w, _ := zw.Create(n)
-		w.Write([]byte("x"))
+		_, _ = w.Write([]byte("x"))
 	}
-	zw.Close()
+	_ = zw.Close()
 	c, tool, _ := setup(t, zb.Bytes(), nil)
 	tool.Archive = "zip"
 	_, err := c.Ensure(context.Background(), tool)
@@ -274,9 +274,9 @@ func TestEnsureZipPathTraversal(t *testing.T) {
 func TestEnsureIgnoresStaleOK(t *testing.T) {
 	c, tool, hits := setup(t, tgz(t, entry{name: "demo-1.2.3/demo", body: "x"}), nil)
 	dir := filepath.Join(c.Dir, "demo-1.2.3")
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "demo"), []byte("tampered"), 0o755)
-	os.WriteFile(filepath.Join(dir, ".ok"), []byte("wrong"), 0o644)
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "demo"), []byte("tampered"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, ".ok"), []byte("wrong"), 0o644)
 	if _, err := c.Ensure(context.Background(), tool); err != nil {
 		t.Fatal(err)
 	}

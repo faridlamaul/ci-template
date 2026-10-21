@@ -113,7 +113,7 @@ func TestRubyTestRunner(t *testing.T) {
 
 func TestRubyInstallAndBuildErrors(t *testing.T) {
 	_, err := Ruby{}.Steps(context.Background(), fakeEnv(project(t, map[string]string{"Gemfile": ""})), ci.Detection{}, policy.CIConfig{})
-	if err == nil || !strings.Contains(err.Error(), "Gemfile.lock is missing; commit it (bundle lock)") {
+	if err == nil || !strings.Contains(err.Error(), "missing Gemfile.lock; commit it (bundle lock)") {
 		t.Fatalf("err = %v", err)
 	}
 	_, err = Ruby{}.Steps(context.Background(), fakeEnv(project(t, map[string]string{"Gemfile.lock": lock(), "a.gemspec": "", "b.gemspec": ""})), ci.Detection{}, policy.CIConfig{})

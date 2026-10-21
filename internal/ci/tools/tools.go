@@ -186,8 +186,8 @@ func (c *Cache) Ensure(ctx context.Context, t Tool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("tool %s: %w", t.Name, err)
 	}
-	defer os.Remove(dl.Name())
-	defer dl.Close()
+	defer func() { _ = os.Remove(dl.Name()) }()
+	defer func() { _ = dl.Close() }()
 
 	var got string
 	sleep := c.Sleep
@@ -210,7 +210,7 @@ func (c *Cache) Ensure(ctx context.Context, t Tool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("tool %s: %w", t.Name, err)
 	}
-	defer os.RemoveAll(stage)
+	defer func() { _ = os.RemoveAll(stage) }()
 	if err := t.install(dl, stage, c.Arch); err != nil {
 		return "", fmt.Errorf("tool %s: %w", t.Name, err)
 	}
@@ -258,7 +258,7 @@ func (c *Cache) fetch(ctx context.Context, url string, f *os.File) (string, erro
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("unexpected status %s", resp.Status)
 	}
@@ -393,7 +393,7 @@ func extractTarGz(r io.Reader, root string) error {
 	if err != nil {
 		return fmt.Errorf("gzip: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	for {
 		h, err := tr.Next()
@@ -459,7 +459,7 @@ func zipLink(zf *zip.File, rel string) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	b, err := io.ReadAll(io.LimitReader(rc, 4096))
 	if err != nil {
 		return err
@@ -475,6 +475,6 @@ func zipFile(zf *zip.File, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	return writeFile(dst, rc, 0o644)
 }

@@ -39,7 +39,7 @@ func parseGoMod(path string) (goMod, error) {
 	if err != nil {
 		return goMod{}, fmt.Errorf("read go.mod: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var m goMod
 	sc := bufio.NewScanner(f)
 	for n := 1; sc.Scan(); n++ {
@@ -177,7 +177,7 @@ func coverAfter(_ context.Context, dir string) error {
 		return fmt.Errorf("create coverage.xml: %w", err)
 	}
 	if err := CoverToCobertura(in, dir, f); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()

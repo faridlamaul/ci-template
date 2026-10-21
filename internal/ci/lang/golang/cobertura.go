@@ -76,7 +76,7 @@ func CoverToCobertura(profile, moduleDir string, w io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("open cover profile: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	files := map[string]map[int]int{} // module-relative file -> line -> hits
 	sc := bufio.NewScanner(f)

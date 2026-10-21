@@ -89,9 +89,8 @@ func WriteSARIF(w io.Writer, r finding.Result, version string) error {
 	rules := map[string]*sarifRule{}
 	maxSev := map[string]finding.Severity{}
 	for _, f := range fs {
-		rule, ok := rules[f.ID]
-		if !ok {
-			rule = &sarifRule{
+		if _, ok := rules[f.ID]; !ok {
+			rule := &sarifRule{
 				ID:               f.ID,
 				ShortDescription: sarifText{Text: orID(f.Message, f.ID)},
 				Properties:       map[string]any{"tags": []string{"security", string(f.Category)}},

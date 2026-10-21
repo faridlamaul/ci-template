@@ -248,7 +248,7 @@ func TestReadCappedTooLarge(t *testing.T) {
 	if err := f.Truncate(ciMaxFile + 1); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 	if _, err := readCapped(p); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("err = %v", err)
 	}

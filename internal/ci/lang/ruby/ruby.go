@@ -111,7 +111,7 @@ func (Ruby) Steps(_ context.Context, env ci.Env, _ ci.Detection, cfg policy.CICo
 	}
 	lock, err := os.ReadFile(filepath.Join(env.Dir, "Gemfile.lock"))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, errors.New("Gemfile.lock is missing; commit it (bundle lock)")
+		return nil, errors.New("missing Gemfile.lock; commit it (bundle lock)")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read Gemfile.lock: %w", err)

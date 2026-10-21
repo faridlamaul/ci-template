@@ -140,12 +140,12 @@ func (g *gitleaks) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(report)
+	defer func() { _ = os.Remove(report) }()
 	work, err := tempDir(t, "gitleaks")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(work)
+	defer func() { _ = os.RemoveAll(work) }()
 	cfg := filepath.Join(work, "gitleaks.toml")
 	if err := os.WriteFile(cfg, []byte(gitleaksDefaultConfig), 0o600); err != nil {
 		return nil, fmt.Errorf("write gitleaks config: %w", err)
@@ -190,7 +190,7 @@ func tempDir(t Target, tool string) (string, error) {
 	}
 	for _, x := range []string{t.Dir, t.RawDir} {
 		if x != "" && within(x, d) {
-			os.RemoveAll(d)
+			_ = os.RemoveAll(d)
 			return "", fmt.Errorf("temp dir %s is inside %s; set TMPDIR elsewhere", filepath.Dir(d), x)
 		}
 	}
@@ -205,10 +205,10 @@ func tempReport(t Target, tool string) (string, error) {
 		return "", fmt.Errorf("create %s report: %w", tool, err)
 	}
 	name := f.Name()
-	f.Close()
+	_ = f.Close()
 	for _, d := range []string{t.Dir, t.RawDir} {
 		if d != "" && within(d, name) {
-			os.Remove(name)
+			_ = os.Remove(name)
 			return "", fmt.Errorf("temp dir %s is inside %s; set TMPDIR elsewhere", filepath.Dir(name), d)
 		}
 	}

@@ -232,7 +232,7 @@ func (o *opengrep) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(output)
+	defer func() { _ = os.Remove(output) }()
 
 	// Stderr is dropped: it can echo source code.
 	_, _, code, err := o.run(ctx, t.Dir, "opengrep", o.args(t, output)...)

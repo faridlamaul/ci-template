@@ -43,11 +43,11 @@ func Run(ctx context.Context, dir string, steps []ci.Step, out io.Writer) []Step
 			reason = "install failed"
 		}
 		if reason != "" {
-			fmt.Fprintf(out, "==> %s (skipped: %s)\n", s.Name, reason)
+			_, _ = fmt.Fprintf(out, "==> %s (skipped: %s)\n", s.Name, reason)
 			rs = append(rs, StepResult{Name: s.Name, Status: "skipped", Reason: reason})
 			continue
 		}
-		fmt.Fprintf(out, "==> %s\n", s.Name)
+		_, _ = fmt.Fprintf(out, "==> %s\n", s.Name)
 		r := runStep(ctx, dir, s, out)
 		if s.Name == "install" && r.Status == "failed" {
 			installFailed = true
@@ -91,7 +91,7 @@ func runStep(ctx context.Context, dir string, s ci.Step, out io.Writer) StepResu
 			break
 		}
 		if err != nil {
-			fmt.Fprintf(out, "shipguard: %v\n", err)
+			_, _ = fmt.Fprintf(out, "shipguard: %v\n", err)
 			if code == 0 {
 				code = -1
 			}

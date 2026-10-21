@@ -243,7 +243,7 @@ func TestEveryUvCmdPinsInterpreter(t *testing.T) {
 			n := 0
 			for _, s := range steps {
 				for _, cm := range s.Cmds {
-					if !(len(cm.Argv) > 0 && cm.Argv[0] == "/tools/uv") && !strings.Contains(cm.Shell, "/tools/uv") {
+					if (len(cm.Argv) == 0 || cm.Argv[0] != "/tools/uv") && !strings.Contains(cm.Shell, "/tools/uv") {
 						continue
 					}
 					n++

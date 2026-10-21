@@ -211,7 +211,7 @@ func doCI(ctx context.Context, g *globals, in *ciInputs, args []string, getenv f
 	var warning string
 	if versionMismatch(det.Version, installed) {
 		warning = fmt.Sprintf("%s %s requested but %s is installed", det.Language, det.Version, installed)
-		fmt.Fprintf(stderr, "warning: %s\n", warning)
+		_, _ = fmt.Fprintf(stderr, "warning: %s\n", warning)
 	}
 	all, err := l.Steps(ctx, ci.Env{Dir: g.dir, Tools: toolFn, Defaults: defaults}, det, cfg)
 	if err != nil {
@@ -233,21 +233,21 @@ func doCI(ctx context.Context, g *globals, in *ciInputs, args []string, getenv f
 	}
 	res := report.CIResult{Language: det.Language, Version: det.Version, Source: det.Source, Steps: rs, Dir: g.dir}
 	if err := report.WriteCI(g.dir, res, getenv); err != nil {
-		fmt.Fprintf(stderr, "warning: write ci results: %s\n", err)
+		_, _ = fmt.Fprintf(stderr, "warning: write ci results: %s\n", err)
 	}
 	if getenv("GITHUB_ACTIONS") == "true" {
 		var failures []report.TestFailure
 		if f, err := os.Open(filepath.Join(g.dir, ".shipguard", "ci", "test-results", "junit.xml")); err == nil {
 			failures, err = report.MergeJUnit([]string{f.Name()}, io.Discard)
 			if err != nil {
-				fmt.Fprintf(stderr, "warning: read junit: %s\n", err)
+				_, _ = fmt.Fprintf(stderr, "warning: read junit: %s\n", err)
 			}
 			_ = f.Close()
 		} else if !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(stderr, "warning: read junit: %s\n", err)
+			_, _ = fmt.Fprintf(stderr, "warning: read junit: %s\n", err)
 		}
 		if err := report.CIGitHub(res, failures, getenv, stdout); err != nil {
-			fmt.Fprintf(stderr, "warning: github annotations: %s\n", err)
+			_, _ = fmt.Fprintf(stderr, "warning: github annotations: %s\n", err)
 		}
 	}
 	code := cirun.ExitCode(rs, cirun.Interrupted(rs) || ctx.Err() != nil)

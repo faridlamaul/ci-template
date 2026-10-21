@@ -215,7 +215,7 @@ func (s *trivy) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(output)
+	defer func() { _ = os.Remove(output) }()
 
 	attempts := 1
 	if s.retry { // config fetches the checks bundle over the network

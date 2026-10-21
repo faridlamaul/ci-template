@@ -410,12 +410,12 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(output)
+	defer func() { _ = os.Remove(output) }()
 	work, err := tempDir(t, "osv")
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(work)
+	defer func() { _ = os.RemoveAll(work) }()
 	config := filepath.Join(work, "osv-scanner.toml")
 	if err := os.WriteFile(config, []byte(osvConfig), 0o600); err != nil {
 		return nil, fmt.Errorf("write osv-scanner config: %w", err)
