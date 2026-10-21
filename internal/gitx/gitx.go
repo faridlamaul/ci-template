@@ -11,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"sync/atomic"
 )
 
 // gitError is a failed git invocation with its trimmed stderr.
@@ -27,18 +29,27 @@ func (e *gitError) Error() string {
 
 func (e *gitError) Unwrap() error { return e.err }
 
-// extraConfig holds "key=value" settings passed as -c to every git call.
-var extraConfig []string
+// extraConfig holds the "key=value" settings passed as -c to every git call.
+// It is swapped atomically so SetConfig is safe while git calls run.
+var extraConfig atomic.Pointer[[]string]
 
 // SetConfig sets git configuration applied to every git call, for example a
-// proxy the CI environment needs. Each entry is "key=value".
-func SetConfig(kv []string) { extraConfig = kv }
+// proxy the CI environment needs. Each entry is "key=value"; kv is copied.
+// It is safe for concurrent use.
+func SetConfig(kv []string) {
+	c := slices.Clone(kv)
+	extraConfig.Store(&c)
+}
 
 // git runs git in dir without ever prompting for credentials. HTTP transfers
 // slower than 1000 B/s for 60s are aborted so a stalled fetch cannot hang.
 func git(dir string, args ...string) ([]byte, error) {
 	full := []string{"-c", "color.ui=false", "-c", "log.showSignature=false"}
-	for _, kv := range extraConfig {
+	var extra []string
+	if p := extraConfig.Load(); p != nil {
+		extra = *p
+	}
+	for _, kv := range extra {
 		full = append(full, "-c", kv)
 	}
 	full = append(full, args...)
