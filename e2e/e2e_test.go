@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -35,6 +36,7 @@ type finding struct {
 	ID       string   `json:"id"`
 	Aliases  []string `json:"aliases"`
 	File     string   `json:"file"`
+	Line     int      `json:"line"`
 	Status   string   `json:"status"`
 }
 
@@ -167,26 +169,61 @@ func commitAll(t *testing.T, dir, msg string) string {
 	return git(t, dir, "rev-parse", "HEAD")
 }
 
-func readFindings(t *testing.T, dir string) []finding {
+type scannerRun struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+type result struct {
+	Scanners []scannerRun `json:"scanners"`
+	Findings []finding    `json:"findings"`
+}
+
+func readResult(t *testing.T, dir string) result {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, ".shipguard", "findings.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var res struct {
-		Findings []finding `json:"findings"`
-	}
+	var res result
 	if err := json.Unmarshal(data, &res); err != nil {
 		t.Fatal(err)
 	}
-	return res.Findings
+	return res
+}
+
+func readFindings(t *testing.T, dir string) []finding {
+	t.Helper()
+	return readResult(t, dir).Findings
+}
+
+// blockingRows returns the rows of the "Blocking findings" table in the gate
+// summary printed to stdout.
+func blockingRows(out string) []string {
+	_, table, ok := strings.Cut(out, "### Blocking findings\n")
+	if !ok {
+		return nil
+	}
+	var rows []string
+	for _, line := range strings.Split(table, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "" && len(rows) > 0:
+			return rows
+		case strings.HasPrefix(line, "| Severity |"), strings.HasPrefix(line, "|---"):
+		case strings.HasPrefix(line, "| "):
+			rows = append(rows, line)
+		}
+	}
+	return rows
 }
 
 func TestFixtureFindings(t *testing.T) {
 	img := image(t)
 	for _, lang := range []string{"go", "node", "python", "ruby", "rust"} {
+		// Serial on purpose: parallel runs hammer the osv-scanner and trivy
+		// databases and APIs and make the suite flaky.
 		t.Run(lang, func(t *testing.T) {
-			t.Parallel()
 			dir := newRepo(t, img, lang)
 			secret := fakeSecret()
 			if err := os.WriteFile(filepath.Join(dir, secretFile), []byte("api_key = \""+secret+"\"\n"), 0o644); err != nil {
@@ -259,7 +296,8 @@ func TestPRDiffAware(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1\n%s", code, out)
 	}
-	var added, existing int
+	var added int
+	var existing []finding
 	for _, f := range readFindings(t, dir) {
 		switch f.Status {
 		case "new":
@@ -268,19 +306,35 @@ func TestPRDiffAware(t *testing.T) {
 				t.Errorf("unexpected new finding {%s %s}", f.Category, f.ID)
 			}
 		case "existing":
-			existing++
+			existing = append(existing, f)
 		}
 	}
 	if added != 1 {
 		t.Errorf("new findings = %d, want exactly 1\n%s", added, out)
 	}
-	if existing == 0 {
+	if len(existing) == 0 {
 		t.Error("expected the fixture's findings to be existing")
 	}
 	// The gate blocks on the new finding only: the fixture's existing
-	// findings are above the thresholds but must not block.
-	if !strings.Contains(out, "\n1 blocking, 1 new, ") || !strings.Contains(out, "| shipguard.python.command-injection | extra.py:5 |") {
-		t.Errorf("gate summary does not show exactly one blocking (new) finding:\n%s", out)
+	// findings are above the thresholds (TestFixtureFindings fails on them in
+	// a full scan) but must not block a PR.
+	if !strings.Contains(out, "\n1 blocking, 1 new, ") {
+		t.Errorf("gate summary does not count exactly one blocking (new) finding:\n%s", out)
+	}
+	rows := blockingRows(out)
+	if len(rows) != 1 || !strings.Contains(rows[0], "| shipguard.python.command-injection | extra.py:5 |") {
+		t.Errorf("blocking table = %q, want only the new command injection in extra.py:5", rows)
+	}
+	for _, f := range existing {
+		loc := f.File
+		if f.Line > 0 {
+			loc += ":" + strconv.Itoa(f.Line)
+		}
+		for _, r := range rows {
+			if strings.Contains(r, "| "+f.ID+" | "+loc+" |") {
+				t.Errorf("existing finding {%s %s %s} is blocking: %s", f.Category, f.ID, loc, r)
+			}
+		}
 	}
 }
 
@@ -357,7 +411,21 @@ func TestNoLockfileRepoPasses(t *testing.T) {
 	}
 	git(t, dir, "init", "-q", "-b", "main")
 	commitAll(t, dir, "readme")
-	if out, code := shipguard(t, img, dir); code != 0 {
+	out, code := shipguard(t, img, dir)
+	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	// A pass must come from scanners that ran, recorded in findings.json.
+	res := readResult(t, dir)
+	if len(res.Findings) != 0 {
+		t.Errorf("findings = %+v, want none", res.Findings)
+	}
+	if len(res.Scanners) == 0 {
+		t.Error("findings.json records no scanner runs")
+	}
+	for _, s := range res.Scanners {
+		if s.Status != "ok" {
+			t.Errorf("scanner %s status = %q, want ok", s.Name, s.Status)
+		}
 	}
 }
