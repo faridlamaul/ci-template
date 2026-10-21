@@ -38,8 +38,7 @@
           "--locked",
           "--",
           "-D",
-          "warnings",
-          "--locked"
+          "warnings"
         ],
         "Shell": "",
         "Env": null

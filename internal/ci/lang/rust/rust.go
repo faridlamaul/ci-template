@@ -193,10 +193,10 @@ func (Rust) Steps(ctx context.Context, env ci.Env, _ ci.Detection, cfg policy.CI
 	}
 
 	if err := add("lint", cfg.Steps.Lint, func() (ci.Step, error) {
-		clippy := append(append([]string{"clippy", "--all-targets"}, locked...), "--", "-D", "warnings")
+		clippy := ci.Cmd{Argv: append(append([]string{"cargo", "clippy", "--all-targets"}, locked...), "--", "-D", "warnings")}
 		return ci.Step{Cmds: []ci.Cmd{
 			{Argv: []string{"cargo", "fmt", "--check"}},
-			cargo(clippy...),
+			clippy,
 		}}, nil
 	}); err != nil {
 		return nil, err

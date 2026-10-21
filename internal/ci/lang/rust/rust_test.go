@@ -80,20 +80,36 @@ func TestRustLockedFlag(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		var want int
 		for _, s := range steps {
 			for _, c := range s.Cmds {
+				var argv []string
 				if c.Shell != "" {
-					if strings.Contains(c.Shell, "nextest run") && strings.Contains(c.Shell, "--locked") != locked {
-						t.Fatalf("locked=%v shell=%q", locked, c.Shell)
+					if !strings.Contains(c.Shell, "nextest run") {
+						continue
 					}
-					continue
+					argv = strings.Fields(c.Shell)
+				} else {
+					argv = c.Argv
 				}
-				line := strings.Join(c.Argv, " ")
+				n, afterSep, sep := 0, false, false
+				for _, a := range argv {
+					if a == "--" {
+						sep = true
+					}
+					if a == "--locked" {
+						n++
+						afterSep = afterSep || sep
+					}
+				}
+				line := strings.Join(argv, " ")
 				if strings.HasPrefix(line, "cargo fmt") {
-					continue
+					want = 0
+				} else {
+					want = map[bool]int{true: 1, false: 0}[locked]
 				}
-				if has := strings.Contains(line, "--locked"); has != locked {
-					t.Fatalf("locked=%v %q", locked, line)
+				if n != want || afterSep {
+					t.Fatalf("locked=%v count=%d afterSep=%v: %q", locked, n, afterSep, line)
 				}
 			}
 		}
