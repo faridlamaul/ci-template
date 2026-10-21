@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -159,7 +160,7 @@ func ciFixture(t *testing.T, dir string) CIResult {
 func TestWriteCIFiles(t *testing.T) {
 	dir := t.TempDir()
 	r := ciFixture(t, dir)
-	if err := WriteCI(dir, r, func(string) string { return "" }); err != nil {
+	if err := WriteCI(dir, r); err != nil {
 		t.Fatal(err)
 	}
 	base := filepath.Join(dir, ".shipguard", "ci")
@@ -187,7 +188,7 @@ func TestWriteCIFiles(t *testing.T) {
 
 func TestWriteCINoJUnit(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteCI(dir, CIResult{Language: "go"}, func(string) string { return "" }); err != nil {
+	if err := WriteCI(dir, CIResult{Language: "go"}); err != nil {
 		t.Fatal(err)
 	}
 	j, _ := os.ReadFile(filepath.Join(dir, ".shipguard/ci/test-results/junit.xml"))
@@ -199,16 +200,20 @@ func TestWriteCINoJUnit(t *testing.T) {
 	}
 }
 
-func TestWriteCIBitbucketRootCopy(t *testing.T) {
+func TestWriteCIBitbucketNoRootCopy(t *testing.T) {
+	// Bitbucket scans hidden directories, so a clone-root copy would double-count.
 	dir, clone := t.TempDir(), t.TempDir()
 	r := ciFixture(t, dir)
-	env := map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "BITBUCKET_CLONE_DIR": clone}
-	if err := WriteCI(dir, r, func(k string) string { return env[k] }); err != nil {
+	t.Setenv("BITBUCKET_BUILD_NUMBER", "1")
+	t.Setenv("BITBUCKET_CLONE_DIR", clone)
+	if err := WriteCI(dir, r); err != nil {
 		t.Fatal(err)
 	}
-	j, err := os.ReadFile(filepath.Join(clone, "test-results", "junit.xml"))
-	if err != nil || !strings.Contains(string(j), "TestOne") {
-		t.Fatalf("%s %v", j, err)
+	if _, err := os.Stat(filepath.Join(clone, "test-results", "junit.xml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("clone-root junit.xml must not be written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".shipguard", "ci", "test-results", "junit.xml")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -217,7 +222,7 @@ func TestWriteCITruncatedJUnitWarns(t *testing.T) {
 	r := ciFixture(t, dir)
 	writeFile(t, filepath.Join(dir, "reports/bad.xml"), "<testsuite><testcase")
 	r.Steps[0].JUnit = []string{"reports/a.xml", "reports/bad.xml", "reports/missing.xml", "reports/a.xml"}
-	if err := WriteCI(dir, r, func(string) string { return "" }); err != nil {
+	if err := WriteCI(dir, r); err != nil {
 		t.Fatal(err)
 	}
 	base := filepath.Join(dir, ".shipguard", "ci")
@@ -289,7 +294,7 @@ func TestWriteCIRemovesStaleCoverage(t *testing.T) {
 	dir := t.TempDir()
 	stale := filepath.Join(dir, ".shipguard/ci/coverage.xml")
 	writeFile(t, stale, "old")
-	if err := WriteCI(dir, CIResult{Language: "go"}, func(string) string { return "" }); err != nil {
+	if err := WriteCI(dir, CIResult{Language: "go"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(stale); err == nil {
