@@ -138,6 +138,8 @@ jobs:
           .github/workflows/ci.yml
           .github/workflows/scan.yml
           .github/workflows/adapter-github.yml
+          .github/workflows/adapter-ci.yml
+          .github/workflows/build-test.yml
           .github/workflows/bump-scanners.yml
           .github/workflows/dogfood.yml
           .github/workflows/release.yml

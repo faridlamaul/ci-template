@@ -1,0 +1,187 @@
+name: shipguard ci
+description: Detect the project language, set up its toolchain, then lint, test and build with shipguard ci.
+author: faridlamaul
+
+inputs:
+  dir:
+    description: Project directory, relative to the workspace.
+    default: .
+  language:
+    description: Language override (go, node, python, ruby or rust). Empty detects it.
+    default: ""
+  version:
+    description: Toolchain version override. Empty detects it.
+    default: ""
+  steps:
+    description: Space-separated steps to run (lint, test, build). Empty runs all.
+    default: ""
+  config:
+    description: Path to the shipguard config file.
+    default: .shipguard.yaml
+  shipguard-version:
+    description: shipguard release to install (vX.Y.Z). Empty derives it from the action ref, or builds from source.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # A release tag (direct use at vX.Y.Z, or the input) installs the signed
+    # release archive; any other ref builds from the action checkout.
+    - name: Resolve shipguard version
+      id: version
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.shipguard-version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        version="$INPUT_VERSION"
+        if [ -z "$version" ] && [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          version="$ACTION_REF"
+        fi
+        if [ -n "$version" ] && ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::error::shipguard-version must look like v1.2.3"
+          exit 2
+        fi
+        echo "release=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Validate steps
+      shell: bash
+      env:
+        INPUT_STEPS: ${{ inputs.steps }}
+      run: |
+        if ! [[ "$INPUT_STEPS" =~ ^[a-z\ ]*$ ]]; then
+          echo "::error::steps may only contain lowercase letters and spaces"
+          exit 2
+        fi
+
+    - name: Install cosign
+      if: ${{ steps.version.outputs.release != '' }}
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+    - name: Install shipguard release
+      if: ${{ steps.version.outputs.release != '' }}
+      shell: bash
+      env:
+        RELEASE: ${{ steps.version.outputs.release }}
+      run: |  # zizmor: ignore[github-env] -- fixed runner-temp dir, verified binary
+        case "$(uname -m)" in
+          x86_64) arch=amd64 ;;
+          aarch64 | arm64) arch=arm64 ;;
+          *) echo "::error::unsupported architecture $(uname -m)"; exit 2 ;;
+        esac
+        tmp="$(mktemp -d)"
+        base="https://github.com/faridlamaul/shipguard/releases/download/${RELEASE}"
+        archive="shipguard_${RELEASE#v}_linux_${arch}.tar.gz"
+        cd "$tmp"
+        for f in "$archive" checksums.txt checksums.txt.sigstore.json; do
+          curl --fail --silent --show-error --location --retry 3 --proto '=https' -o "$f" "$base/$f"
+        done
+        cosign verify-blob \
+          --bundle checksums.txt.sigstore.json \
+          --certificate-identity https://github.com/faridlamaul/shipguard/.github/workflows/release.yml@refs/heads/main \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          checksums.txt
+        sha256sum -c --ignore-missing checksums.txt
+        mkdir -p "$RUNNER_TEMP/shipguard-bin"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/shipguard-bin" shipguard
+        echo "$RUNNER_TEMP/shipguard-bin" >> "$GITHUB_PATH"
+
+    - name: Set up Go to build shipguard
+      if: ${{ steps.version.outputs.release == '' }}
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ github.action_path }}/../../../go.mod
+        cache: false
+
+    - name: Build shipguard from source
+      if: ${{ steps.version.outputs.release == '' }}
+      shell: bash
+      working-directory: ${{ github.action_path }}/../../..
+      run: |  # zizmor: ignore[github-env] -- fixed runner-temp dir, verified binary
+        mkdir -p "$RUNNER_TEMP/shipguard-bin"
+        go build -o "$RUNNER_TEMP/shipguard-bin/shipguard" ./cmd/shipguard
+        echo "$RUNNER_TEMP/shipguard-bin" >> "$GITHUB_PATH"
+
+    - name: Detect language
+      id: detect
+      shell: bash
+      env:
+        SHIPGUARD_DIR: ${{ inputs.dir }}
+        SHIPGUARD_CONFIG: ${{ inputs.config }}
+        SHIPGUARD_LANGUAGE: ${{ inputs.language }}
+        SHIPGUARD_TOOLCHAIN: ${{ inputs.version }}
+      run: |
+        json="$(shipguard ci detect --format json)"
+        echo "$json"
+        language="$(printf '%s' "$json" | jq -r .language)"
+        version="$(printf '%s' "$json" | jq -r .version)"
+        if ! [[ "$language" =~ ^(go|node|python|ruby|rust)$ ]]; then
+          echo "::error::unexpected language from shipguard ci detect"
+          exit 2
+        fi
+        if ! [[ "$version" =~ ^[A-Za-z0-9._+-]*$ ]]; then
+          echo "::error::unexpected version from shipguard ci detect"
+          exit 2
+        fi
+        {
+          echo "language=$language"
+          echo "version=$version"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Set up Go
+      if: ${{ steps.detect.outputs.language == 'go' }}
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ inputs.dir }}/go.mod
+        cache: false
+
+    - name: Set up Node
+      if: ${{ steps.detect.outputs.language == 'node' }}
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ steps.detect.outputs.version }}
+        package-manager-cache: false
+
+    - name: Set up Python
+      if: ${{ steps.detect.outputs.language == 'python' }}
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ steps.detect.outputs.version }}
+        cache: ""
+
+    - name: Set up Ruby
+      if: ${{ steps.detect.outputs.language == 'ruby' }}
+      uses: ruby/setup-ruby@824c0e29fdfc7d689c191c27acc969d2d04b7dd8 # v1.331.0
+      with:
+        ruby-version: ${{ steps.detect.outputs.version }}
+        bundler-cache: false
+
+    - name: Set up Rust
+      if: ${{ steps.detect.outputs.language == 'rust' }}
+      shell: bash
+      env:
+        RUST_VERSION: ${{ steps.detect.outputs.version }}
+      run: |
+        rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy,rustfmt
+        rustup default "$RUST_VERSION"
+
+    - name: Run shipguard ci
+      shell: bash
+      env:
+        SHIPGUARD_DIR: ${{ inputs.dir }}
+        SHIPGUARD_CONFIG: ${{ inputs.config }}
+        SHIPGUARD_LANGUAGE: ${{ inputs.language }}
+        SHIPGUARD_TOOLCHAIN: ${{ inputs.version }}
+        INPUT_STEPS: ${{ inputs.steps }}
+      run: |
+        # Word splitting is intended: steps is validated to ^[a-z ]*$.
+        # shellcheck disable=SC2086
+        shipguard ci $INPUT_STEPS
+
+    - name: Upload results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: shipguard-ci
+        path: ${{ inputs.dir }}/.shipguard/ci/
+        if-no-files-found: ignore

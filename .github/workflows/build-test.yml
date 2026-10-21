@@ -1,0 +1,75 @@
+name: Reusable shipguard build and test
+
+on:
+  workflow_call:
+    inputs:
+      dir:
+        description: "Project directory, relative to the workspace"
+        type: string
+        default: .
+        required: false
+      language:
+        description: "Language override (go, node, python, ruby or rust); empty detects it"
+        type: string
+        default: ""
+        required: false
+      version:
+        description: "Toolchain version override; empty detects it"
+        type: string
+        default: ""
+        required: false
+      steps:
+        description: "Space-separated steps to run (lint, test, build); empty runs all"
+        type: string
+        default: ""
+        required: false
+      config:
+        description: "Path to the shipguard config file"
+        type: string
+        default: .shipguard.yaml
+        required: false
+      shipguard-version:
+        description: "shipguard release to install (vX.Y.Z); empty builds from the workflow source"
+        type: string
+        default: ""
+        required: false
+      runs-on:
+        description: "Runner label"
+        type: string
+        default: ubuntu-latest
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: shipguard ci
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Check out caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # job.workflow_sha is this workflow's commit; uses: cannot take expressions.
+      - name: Check out shipguard adapter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: faridlamaul/shipguard
+          ref: ${{ job.workflow_sha }}
+          path: .shipguard-action
+          persist-credentials: false
+
+      - name: Run shipguard ci
+        uses: ./.shipguard-action/adapters/github/ci
+        with:
+          dir: ${{ inputs.dir }}
+          language: ${{ inputs.language }}
+          version: ${{ inputs.version }}
+          steps: ${{ inputs.steps }}
+          config: ${{ inputs.config }}
+          shipguard-version: ${{ inputs.shipguard-version }}
