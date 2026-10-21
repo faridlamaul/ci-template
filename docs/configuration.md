@@ -134,7 +134,7 @@ scanners:
 
 ## CI steps (`ci`)
 
-The `ci` section configures `shipguard ci` (lint, test and build). Unlike the security policy, it is read from the pull request head, not the base, because the PR owns its own build commands. Unknown keys under `ci` are config errors (exit 2).
+The `ci` section configures `shipguard ci` (lint, test and build). Unlike the security policy, it is read from the pull request head, not the base, because the PR owns its own build commands. Unknown keys under `ci` are config errors (exit 2). Usage per platform, defaults per language and outputs are in [ci.md](ci.md).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -143,8 +143,8 @@ The `ci` section configures `shipguard ci` (lint, test and build). Unlike the se
 | `ci.timeouts.per_step` | duration string | `30m` | A positive duration in `ms`, `s`, `m` or `h` units, as for `timeouts.per_scanner`. |
 | `ci.steps.<step>.run` | string | `""` | Command that replaces the language default. `<step>` is `lint`, `test` or `build`. |
 | `ci.steps.<step>.enabled` | bool | `true` | Set `false` to skip the step. Setting `run` on a disabled step is an error. |
-| `ci.steps.test.junit` | list of strings | `[]` | JUnit XML paths your own test command writes. |
-| `ci.steps.test.coverage` | string | `""` | Coverage report path your own test command writes. |
+| `ci.steps.<step>.junit` | list of strings | `[]` | JUnit XML globs your own command writes (set for `test`). A `run` override drops the step's default JUnit. |
+| `ci.steps.<step>.coverage` | string | `""` | Cobertura file your own command writes. A `run` override drops the step's default coverage. |
 
 ```yaml shipguard-config
 ci:

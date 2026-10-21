@@ -20,6 +20,7 @@ On a pull request only the findings the PR introduces can fail the gate. On the 
 | Part | State |
 |---|---|
 | Go CLI (`scan`, `gate`, `report`, `run`) | done |
+| `shipguard ci`: lint, test and build for Go, Node, Python, Ruby and Rust on GitHub, GitLab and Bitbucket | done, see [docs/ci.md](docs/ci.md) |
 | GitHub adapter (reusable workflow and composite action) | done |
 | GitLab component (CI/CD Catalog) | released |
 | Bitbucket pipe | released |
@@ -64,10 +65,30 @@ exceptions:
     expires: 2026-12-31
 ```
 
+## Quick start: lint, test and build (`shipguard ci`)
+
+`shipguard ci` detects the language (Go, Node, Python, Ruby, Rust) and runs pinned lint, test and build steps. Add `.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  ci:
+    uses: faridlamaul/shipguard/.github/workflows/build-test.yml@vX.Y.Z
+```
+
+GitLab and Bitbucket snippets, the defaults per language, the `ci:` config, outputs and exit codes are in [docs/ci.md](docs/ci.md). This replaces the legacy `go-ci`, `node-ci` and `python-ci` workflows below.
+
 ## Documentation
 
 | Page | Contents |
 |---|---|
+| [docs/ci.md](docs/ci.md) | `shipguard ci`: usage per platform, defaults per language, `ci:` config, outputs, exit codes, security |
 | [docs/configuration.md](docs/configuration.md) | Every `.shipguard.yaml` key, defaults, exceptions, PR policy, ignored scanner config, exit codes, environment variables |
 | [docs/github.md](docs/github.md) | Inputs, permissions, hardening, tier notes |
 | [docs/gitlab.md](docs/gitlab.md) | Component inputs, `include: remote` with integrity, hardening |
@@ -96,7 +117,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## Legacy workflows
 
-This repository also still publishes the reusable GitHub Actions workflows (`workflow_call`) it started with. They are separate from shipguard. The examples use `@v1.0.3`, the latest published tag. A floating `v1` tag does not exist yet; it starts with the first shipguard release.
+This repository also still publishes the reusable GitHub Actions workflows (`workflow_call`) it started with. They are separate from shipguard. `go-ci`, `node-ci` and `python-ci` are deprecated in favour of `shipguard ci` ([docs/ci.md](docs/ci.md)) and will be removed in the next major release. The examples use `@v1.0.3`, the latest published tag. A floating `v1` tag does not exist yet; it starts with the first shipguard release.
 
 Instead of duplicating hundreds of lines of CI/CD YAML across every repository, consume these modular workflows with just a few lines of configuration.
 
