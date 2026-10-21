@@ -5,7 +5,11 @@
 # internal/ci/tools/ci-tools.env current: only each tool's <TOOL>_VERSION and
 # <TOOL>_SHA256_* lines are rewritten (URL templates, manual defaults, comments
 # and order stay). The checksums are computed from the downloaded assets
-# (HTTPS only) and cross-checked against the digest GitHub records for them.
+# (HTTPS only) and cross-checked against every upstream source that exists (the digest GitHub
+# records and the checksum file the project publishes); at least one source is
+# required and all present ones must match. URL templates must stay under
+# https://github.com/<owner>/<repo>/releases/download/<tag>/. The newest
+# version (semver order) wins; a version below the current pin needs --pin.
 # After a write, `go test ./internal/ci/tools/ -run TestLoadEmbedded` must pass
 # or the bump fails and ci-tools.env is restored. Idempotent.
 #
@@ -34,7 +38,15 @@ pins=""   # space-separated tool=version pairs (bash 3.2 has no associative arra
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) check=1 ;;
-    --pin) shift; pins="$pins $1" ;;
+    --pin)
+      shift
+      case "${1:-}" in
+        *=*) ;;
+        *) echo "--pin wants tool=version" >&2; exit 2 ;;
+      esac
+      printf '%s\n' "${1#*=}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+        || { echo "--pin version must be X.Y.Z, got ${1#*=}" >&2; exit 2; }
+      pins="$pins $1" ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -126,16 +138,25 @@ done
 
 # ---- internal/ci/tools/ci-tools.env ----
 
-# ci_tag <owner/repo> <tool> <tag-prefix>: newest stable release tag of the form
-# <prefix>X.Y.Z (skips prereleases, drafts and other crates' tags), or the
-# pinned version.
+# ci_tag <owner/repo> <tool> <tag-prefix> <current-version>: the highest stable
+# release tag of the form <prefix>X.Y.Z (numeric semver order, not list order;
+# prereleases, drafts and other crates' tags are skipped), or the pinned
+# version. Without a pin it refuses a version below the current one.
 ci_tag() {
-  local p
+  local p tag low
   for p in $pins; do
     if [ "${p%%=*}" = "$2" ]; then echo "$3${p#*=}"; return; fi
   done
-  gh api "repos/$1/releases?per_page=100" --jq \
-    "[.[] | select(.prerelease == false and .draft == false and (.tag_name | test(\"^$3[0-9]+\\\\.[0-9]+\\\\.[0-9]+\$\")))][0].tag_name // empty"
+  tag="$(gh api "repos/$1/releases?per_page=100" --jq \
+    "[.[] | select(.prerelease == false and .draft == false and (.tag_name | test(\"^$3[0-9]+\\\\.[0-9]+\\\\.[0-9]+\$\"))) | {t: .tag_name, v: (.tag_name | ltrimstr(\"$3\") | split(\".\") | map(tonumber))}] | sort_by(.v) | last | .t // empty")"
+  if [ -n "$tag" ] && [ "${tag#"$3"}" != "$4" ]; then
+    low="$(printf '%s\n%s\n' "${tag#"$3"}" "$4" | sort -V | head -n 1)"
+    if [ "$low" = "${tag#"$3"}" ]; then
+      echo "$2: latest release ${tag#"$3"} is older than the pinned $4; use --pin $2=<version> to downgrade" >&2
+      exit 1
+    fi
+  fi
+  echo "$tag"
 }
 
 # envget <KEY>: value of KEY in the current ci-tools.env.
@@ -154,11 +175,32 @@ fetch() {
   fi
 }
 
+# upstream_sum <owner/repo> <tag> <tool> <version> <asset> <dir>: the checksum
+# the project itself publishes for <asset>, or nothing when it publishes none.
+upstream_sum() {
+  local repo=$1 tag=$2 tool=$3 v=$4 asset=$5 dir=$6 name f
+  case "$tool" in
+    golangci-lint) name="golangci-lint-$v-checksums.txt" ;;
+    gotestsum) name="gotestsum-$v-checksums.txt" ;;
+    ruff|uv) name="$asset.sha256" ;;
+    cargo-nextest) name="${asset%.tar.gz}.sha256" ;;
+    bun) name="SHASUMS256.txt" ;;
+  esac
+  f="$dir/$name"
+  gh release download "$tag" --repo "$repo" --pattern "$name" --dir "$dir" --clobber >/dev/null 2>&1 || return 0
+  [ -s "$f" ] || return 0
+  checksum_from "$f" "$asset"
+  # A per-asset file may name the asset differently (or not at all).
+  if [ "$(grep -c . "$f")" -eq 1 ] && [ -z "$(checksum_from "$f" "$asset")" ]; then
+    awk '{ print $1; exit }' "$f"
+  fi
+}
+
 ci_lines=()
 # ci_tool <KEY> <owner/repo> <tool> <tag-prefix>
 ci_tool() {
-  local key=$1 repo=$2 tool=$3 prefix=$4 tag v arch upper url asset sha digest
-  tag="$(ci_tag "$repo" "$tool" "$prefix")"
+  local key=$1 repo=$2 tool=$3 prefix=$4 tag v arch upper url asset sha digest up n
+  tag="$(ci_tag "$repo" "$tool" "$prefix" "$(envget "${key}_VERSION")")"
   if [ -z "$tag" ]; then echo "$tool: no stable release found" >&2; exit 1; fi
   v="${tag#"$prefix"}"
   ci_lines+=("${key}_VERSION=$v")
@@ -166,16 +208,30 @@ ci_tool() {
     upper="$(echo "$arch" | tr a-z A-Z)"
     url="$(envget "${key}_URL_${upper}")"
     url="${url//\{version\}/$v}"
+    case "$url" in
+      "https://github.com/$repo/releases/download/$tag/"*) ;;
+      *) echo "$tool: ${key}_URL_${upper} must start with https://github.com/$repo/releases/download/$tag/, got $url" >&2; exit 1 ;;
+    esac
     asset="$(basename "$url")"
     mkdir -p "$work/ci-$key-$arch"
     fetch "$url" "$work/ci-$key-$arch/$asset"
     sha="$(sha256 "$work/ci-$key-$arch/$asset")"
     digest="$(gh api "repos/$repo/releases/tags/$tag" --jq ".assets[] | select(.name==\"$asset\") | .digest" | sed 's/^sha256://')"
-    case "$digest" in
-      ""|null) ;;
-      "$sha") ;;
-      *) echo "checksum mismatch for $asset: upstream $digest, downloaded $sha" >&2; exit 1 ;;
-    esac
+    [ "$digest" = null ] && digest=""
+    up="$(upstream_sum "$repo" "$tag" "$tool" "$v" "$asset" "$work/ci-$key-$arch")"
+    n=0
+    if [ -n "$digest" ]; then
+      n=$((n + 1))
+      [ "$digest" = "$sha" ] || { echo "checksum mismatch for $asset: GitHub digest $digest, downloaded $sha" >&2; exit 1; }
+    fi
+    if [ -n "$up" ]; then
+      n=$((n + 1))
+      [ "$up" = "$sha" ] || { echo "checksum mismatch for $asset: upstream checksum file $up, downloaded $sha" >&2; exit 1; }
+    fi
+    if [ "$n" -eq 0 ]; then
+      echo "$tool: no upstream checksum source (GitHub digest or published checksum file) for $asset; refusing to pin it" >&2
+      exit 1
+    fi
     ci_lines+=("${key}_SHA256_${upper}=$sha")
   done
 }

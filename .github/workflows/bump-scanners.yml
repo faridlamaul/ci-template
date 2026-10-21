@@ -69,7 +69,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
           git add versions.env internal/ci/tools/ci-tools.env
-          git commit -m "chore(deps): bump pinned scanners"
+          git commit -m "chore(deps): bump pinned scanners and CI tools"
           # Checkout used persist-credentials: false, so authenticate the push
           # explicitly with the job token. The branch is owned by this workflow.
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "HEAD:refs/heads/$branch"
@@ -82,5 +82,5 @@ jobs:
               --head "$branch" \
               --base main \
               --title "chore(deps): bump pinned scanners and CI tools" \
-              --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env, and of the CI tools (golangci-lint, gotestsum, ruff, uv, cargo-nextest, bun) in internal/ci/tools/ci-tools.env. Checksums were recomputed from the downloaded assets and verified against the upstream digests; the embedded ci-tools.env still loads. Unit tests and the image end-to-end test passed in the bump workflow."
+              --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env, and of the CI tools (golangci-lint, gotestsum, ruff, uv, cargo-nextest, bun) in internal/ci/tools/ci-tools.env. Every pinned checksum was computed from the downloaded asset and matched against each upstream source that exists (the GitHub asset digest and the project's published checksum file; at least one is required); the new ci-tools.env pins load (go test TestLoadEmbedded). Unit tests and the image end-to-end test passed in the bump workflow."
           fi
