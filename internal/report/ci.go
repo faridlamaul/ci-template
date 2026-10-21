@@ -301,9 +301,9 @@ func resolve(dir, p string) string {
 }
 
 // WriteCI writes .shipguard/ci/{result.json,summary.md,test-results/junit.xml,
-// coverage.xml} under dir. On Bitbucket it also writes test-results/junit.xml
-// at $BITBUCKET_CLONE_DIR (or dir).
-func WriteCI(dir string, r CIResult, getenv func(string) string) error {
+// coverage.xml} under dir. Bitbucket finds the JUnit there itself, so no
+// clone-root copy is written (it would be counted twice).
+func WriteCI(dir string, r CIResult) error {
 	base := filepath.Join(dir, outDir, "ci")
 	if err := os.MkdirAll(filepath.Join(base, "test-results"), 0o755); err != nil {
 		return fmt.Errorf("create ci output dir: %w", err)
@@ -379,19 +379,6 @@ func WriteCI(dir string, r CIResult, getenv func(string) string) error {
 		}
 	} else if err := os.Remove(covOut); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove stale coverage.xml: %w", err)
-	}
-	if getenv("BITBUCKET_BUILD_NUMBER") != "" {
-		root := getenv("BITBUCKET_CLONE_DIR")
-		if root == "" {
-			root = dir
-		}
-		out := filepath.Join(root, "test-results")
-		if err := os.MkdirAll(out, 0o755); err != nil {
-			return fmt.Errorf("create %s: %w", out, err)
-		}
-		if err := os.WriteFile(filepath.Join(out, "junit.xml"), junit.Bytes(), 0o644); err != nil {
-			return fmt.Errorf("write bitbucket junit.xml: %w", err)
-		}
 	}
 	return nil
 }

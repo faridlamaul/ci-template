@@ -247,7 +247,7 @@ func doCI(ctx context.Context, g *globals, in *ciInputs, args []string, getenv f
 		}
 	}
 	res := report.CIResult{Language: det.Language, Version: det.Version, Source: det.Source, Steps: rs, Dir: g.dir}
-	if err := report.WriteCI(g.dir, res, getenv); err != nil {
+	if err := report.WriteCI(g.dir, res); err != nil {
 		_, _ = fmt.Fprintf(stderr, "warning: write ci results: %s\n", err)
 	}
 	if getenv("GITHUB_ACTIONS") == "true" {
