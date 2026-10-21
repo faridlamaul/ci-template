@@ -81,7 +81,16 @@ runs:
           --certificate-identity https://github.com/faridlamaul/shipguard/.github/workflows/release.yml@refs/heads/main \
           --certificate-oidc-issuer https://token.actions.githubusercontent.com \
           checksums.txt
-        sha256sum -c --ignore-missing checksums.txt
+        # checksums.txt is signed, but an older signed file could sit next to a
+        # swapped archive. Require exactly one line for this release's archive
+        # (the name embeds the exact requested version), then check only that
+        # line; without --ignore-missing a missing entry cannot pass.
+        grep -E "^[0-9a-f]{64}  ${archive//./\\.}\$" checksums.txt > archive.sha256 || true
+        if [ "$(wc -l < archive.sha256)" -ne 1 ]; then
+          echo "::error::checksums.txt must contain exactly one entry for ${archive}"
+          exit 2
+        fi
+        sha256sum -c archive.sha256
         mkdir -p "$RUNNER_TEMP/shipguard-bin"
         tar -xzf "$archive" -C "$RUNNER_TEMP/shipguard-bin" shipguard
         echo "$RUNNER_TEMP/shipguard-bin" >> "$GITHUB_PATH"
@@ -119,8 +128,8 @@ runs:
           echo "::error::unexpected language from shipguard ci detect"
           exit 2
         fi
-        if ! [[ "$version" =~ ^[A-Za-z0-9._+-]*$ ]]; then
-          echo "::error::unexpected version from shipguard ci detect"
+        if ! [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+          echo "::error::shipguard ci detect returned an empty or invalid toolchain version; set the version input"
           exit 2
         fi
         {
@@ -132,7 +141,7 @@ runs:
       if: ${{ steps.detect.outputs.language == 'go' }}
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version-file: ${{ inputs.dir }}/go.mod
+        go-version: ${{ steps.detect.outputs.version }}
         cache: false
 
     - name: Set up Node
@@ -176,7 +185,7 @@ runs:
       run: |
         # Word splitting is intended: steps is validated to ^[a-z ]*$.
         # shellcheck disable=SC2086
-        shipguard ci $INPUT_STEPS
+        shipguard ci -- $INPUT_STEPS
 
     - name: Upload results
       if: ${{ always() }}

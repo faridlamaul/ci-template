@@ -43,12 +43,20 @@ jobs:
         with:
           dir: testdata/ci/node/fail-test
 
-      - name: Assert the run failed
+      - name: Assert the run failed in the test step
         env:
           OUTCOME: ${{ steps.ci.outcome }}
+          DIR: testdata/ci/node/fail-test
         run: |
           echo "outcome=$OUTCOME"
           test "$OUTCOME" = "failure"
+          cat "$DIR/.shipguard/ci/result.json"
+          jq -e '
+            (.language == "node") and
+            ([.steps[] | select(.name == "install") | .status] == ["passed"]) and
+            ([.steps[] | select(.name == "lint") | .status] == ["passed"]) and
+            ([.steps[] | select(.name == "test") | .status] == ["failed"])
+          ' "$DIR/.shipguard/ci/result.json"
 
   reusable:
     name: Reusable workflow (python, passes)

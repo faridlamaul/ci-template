@@ -55,7 +55,27 @@ jobs:
         with:
           persist-credentials: false
 
+      # job.workflow_ref describes this workflow; callers pinned to a release
+      # tag get the signed release binary instead of a source build.
+      - name: Resolve shipguard release
+        id: ref
+        env:
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          INPUT_VERSION: ${{ inputs.shipguard-version }}
+        run: |
+          version="$INPUT_VERSION"
+          if [ -z "$version" ] && [[ "$WORKFLOW_REF" =~ @refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          fi
+          if [ -n "$version" ] && ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::shipguard-version must look like v1.2.3"
+            exit 2
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       # job.workflow_sha is this workflow's commit; uses: cannot take expressions.
+      # Sparse: only what the action needs, so the caller's linters never see
+      # shipguard's own fixtures or rules inside the workspace.
       - name: Check out shipguard adapter
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,6 +83,23 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .shipguard-action
           persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /adapters/github/ci/
+            /cmd/
+            /internal/
+            !/internal/**/testdata/
+            /go.mod
+            /go.sum
+
+      - name: Check the sparse checkout excluded fixtures
+        run: |
+          for d in testdata rules; do
+            if [ -e ".shipguard-action/$d" ]; then
+              echo "::error::.shipguard-action/$d must not be checked out"
+              exit 1
+            fi
+          done
 
       - name: Run shipguard ci
         uses: ./.shipguard-action/adapters/github/ci
@@ -72,4 +109,4 @@ jobs:
           version: ${{ inputs.version }}
           steps: ${{ inputs.steps }}
           config: ${{ inputs.config }}
-          shipguard-version: ${{ inputs.shipguard-version }}
+          shipguard-version: ${{ steps.ref.outputs.version }}
