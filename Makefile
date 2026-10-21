@@ -3,7 +3,7 @@ INSTALL_DIR=$(HOME)/.local/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
-.PHONY: all build install test vet fmt-check clean image-test e2e ci-e2e docs-check gitlab-lint publish-test bump-test
+.PHONY: all build install test vet fmt-check clean image-test e2e ci-e2e docs-check demo gitlab-lint publish-test bump-test
 
 all: build
 
@@ -44,6 +44,11 @@ ci-e2e:
 # Validates every `.shipguard.yaml` snippet in README.md and docs/*.md with the real CLI.
 docs-check:
 	./scripts/docs-check.sh
+
+# Re-records docs/assets/demo.gif (needs Docker and vhs).
+demo:
+	docker build --build-arg VERSION=dev -t shipguard:demo .
+	vhs docs/demo/demo.tape
 
 # Tests scripts/publish-gitlab.sh against local bare repositories (no network).
 publish-test:

@@ -1,6 +1,26 @@
-# 🛡️ shipguard
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img alt="shipguard" src="docs/assets/logo-light.svg" width="360">
+  </picture>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <strong>Security scanning and a policy gate for your CI pipeline.</strong><br>
+  One image for GitHub, GitLab and Bitbucket.
+</p>
+
+<p align="center">
+  <a href="https://github.com/faridlamaul/shipguard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/faridlamaul/shipguard/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/faridlamaul/shipguard/actions/workflows/release.yml"><img alt="Release" src="https://github.com/faridlamaul/shipguard/actions/workflows/release.yml/badge.svg"></a>
+  <a href="https://github.com/faridlamaul/shipguard/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/faridlamaul/shipguard?sort=semver"></a>
+  <a href="https://golang.org"><img alt="Go Version" src="https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+</p>
+
+<p align="center">
+  <img alt="shipguard scanning a vulnerable Python project and blocking the gate" src="docs/assets/demo.gif" width="800">
+</p>
 
 Security scanning and a policy gate for your CI pipeline, on **GitHub**, **GitLab** and **Bitbucket**.
 
@@ -83,6 +103,12 @@ jobs:
 ```
 
 GitLab and Bitbucket snippets, the defaults per language, the `ci:` config, outputs and exit codes are in [docs/ci.md](docs/ci.md). This replaces the legacy `go-ci`, `node-ci` and `python-ci` workflows below.
+
+## Screenshots
+
+<!-- screenshot: github-job-summary.png -->
+
+<!-- screenshot: github-pr-annotations.png -->
 
 ## Documentation
 
