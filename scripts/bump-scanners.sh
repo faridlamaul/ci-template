@@ -4,7 +4,8 @@
 # downloaded files and rewrite versions.env. Idempotent: no change, no diff.
 #
 # Usage: scripts/bump-scanners.sh [--check] [--pin tool=version ...]
-#   --check  print the resulting versions.env to stdout, write nothing
+#   --check  print the resulting versions.env to stdout, write nothing; exit 1
+#            when versions.env would change, 0 when it is up to date
 #   --pin    use this version instead of the latest (tools: gitleaks,
 #            opengrep, osv-scanner, trivy)
 # Requires: gh (authenticated), curl, and sha256sum or shasum.
@@ -111,7 +112,12 @@ done
 body="$(printf '%s\n' "${lines[@]}")"
 if [ "$check" -eq 1 ]; then
   printf '%s\n' "$body"
-  if diff -u "$out" <(printf '%s\n' "$body") >&2; then echo "versions.env is up to date" >&2; fi
+  if diff -u "$out" <(printf '%s\n' "$body") >&2; then
+    echo "versions.env is up to date" >&2
+  else
+    echo "versions.env would change" >&2
+    exit 1
+  fi
 else
   printf '%s\n' "$body" > "$out"
 fi
