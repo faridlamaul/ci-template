@@ -45,7 +45,10 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install pytest==9.1.1 ruff==0.17.1
+          # Pins mirror internal/ci/tools/ci-tools.env; update together.
+          # Consumer-pinned versions from requirements files win.
+          python -m pytest --version >/dev/null 2>&1 || pip install pytest==9.1.1
+          ruff --version >/dev/null 2>&1 || pip install ruff==0.17.1
 
       - name: Run linter
         if: inputs.run_lint
