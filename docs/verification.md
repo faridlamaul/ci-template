@@ -12,6 +12,9 @@ Results of the questions that had to be answered on the real platforms before th
 | V6 | done: see below |
 | V7 | done: see below |
 | B1 | done: see below |
+| B2 | done: see below |
+| B3 | pending: Bitbucket API unavailable when v1.3.0 shipped; rerun on bitbucket.org/faridlamaul/shipguard-test |
+| B4 | done: see below |
 
 ## V1: can a Bitbucket pipe use a GHCR image, pinned by tag and by digest?
 
@@ -140,4 +143,19 @@ After `apt-get install curl ca-certificates` the four slim images (`node`, `pyth
 - Slim images: run `apt-get update && apt-get install -y --no-install-recommends curl ca-certificates` first, then use `curl`.
 - `golang` has no slim variant. Use `golang:1.27` (Debian trixie, full).
 
+## B2: does GitLab render the JUnit and Cobertura reports and the coverage regex from the component job?
+
+**Method.** The v1.3.0 release published the `ci` component and ran the publish project's tag pipeline, whose `shipguard-ci` job includes the component on the Go pass fixture (2026-10-21).
+
+**Evidence.** Pipeline 2973137959 of gitlab.com/faridlamaul/shipguard succeeded. The `shipguard-ci` job downloaded the v1.3.0 linux binary, checked its SHA-256 and ran `shipguard ci`. The job's coverage reads 100.0 from the `Coverage:` line, the pipeline test report shows 1 test and 0 failures, and the job carries `junit` and `cobertura` report artifacts. The CI/CD Catalog lists the `ci` and `scan` components for 1.3.0.
+
+**Result.** GitLab parses both reports and the coverage regex from a component job. No fallback is needed.
+
+## B4: do the setup actions and the release path work on GitHub-hosted runners?
+
+**Method.** The adapter self-tests on PR #15 ran the composite action (Go pass, Node failing tests) and the reusable workflow (Python) on ubuntu-latest. After v1.3.0, the private sandbox repository faridlamaul/shipguard-sandbox ran `faridlamaul/shipguard/adapters/github/ci@v1.3.0` and `faridlamaul/shipguard/.github/workflows/build-test.yml@v1.3.0` on the Go pass fixture.
+
+**Evidence.** The PR #15 self-test jobs passed. Sandbox run 39644404218 succeeded in both jobs. Each log shows the cosign check of `checksums.txt` ("Verified OK"), then `shipguard_1.3.0_linux_amd64.tar.gz: OK`, and no build from source.
+
+**Result.** setup-go, setup-node and setup-python work on hosted runners, and callers pinned to a version tag run the signed release binary. Ruby (ruby/setup-ruby) and pnpm/yarn through corepack on hosted runners are covered by the e2e images, not yet by a hosted adapter run.
 
