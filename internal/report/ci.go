@@ -20,6 +20,8 @@ const (
 	ciMaxFailures   = 20
 	ciMaxAnnotation = 50
 	ciResultPath    = ".shipguard/ci/result.json"
+	ciMaxFile       = 64 << 20
+	ciMaxMessage    = 4 << 10
 )
 
 // CIResult is the outcome of one `shipguard ci` run.
@@ -28,6 +30,10 @@ type CIResult struct {
 	Version  string           `json:"version"`
 	Source   string           `json:"source"`
 	Steps    []run.StepResult `json:"steps"`
+
+	// Dir is the project dir that relative JUnit and Coverage paths resolve
+	// against; empty means the working directory.
+	Dir string `json:"-"`
 }
 
 // TestFailure is one failed or errored JUnit test case.
@@ -62,13 +68,9 @@ func MergeJUnit(files []string, w io.Writer) ([]TestFailure, error) {
 	var failures []TestFailure
 	var body bytes.Buffer
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		raws, fs, err := readJUnit(f)
 		if err != nil {
-			return nil, fmt.Errorf("read junit %s: %w", f, err)
-		}
-		raws, fs, err := parseJUnit(data)
-		if err != nil {
-			return nil, fmt.Errorf("parse junit %s: %w", f, err)
+			return nil, err
 		}
 		for _, raw := range raws {
 			body.Write(raw)
@@ -84,6 +86,35 @@ func MergeJUnit(files []string, w io.Writer) ([]TestFailure, error) {
 		return nil, fmt.Errorf("write junit: %w", err)
 	}
 	return failures, nil
+}
+
+// readCapped reads path, failing when it exceeds ciMaxFile bytes.
+func readCapped(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, ciMaxFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > ciMaxFile {
+		return nil, fmt.Errorf("file exceeds %d MiB", ciMaxFile>>20)
+	}
+	return data, nil
+}
+
+func readJUnit(path string) ([][]byte, []TestFailure, error) {
+	data, err := readCapped(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read junit %s: %w", path, err)
+	}
+	raws, fs, err := parseJUnit(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse junit %s: %w", path, err)
+	}
+	return raws, fs, nil
 }
 
 func parseJUnit(data []byte) ([][]byte, []TestFailure, error) {
@@ -141,7 +172,7 @@ func suiteFailures(s junitSuite) []TestFailure {
 				msg, _, _ = strings.Cut(strings.TrimSpace(f.Text), "\n")
 				msg = strings.TrimSpace(msg)
 			}
-			out = append(out, TestFailure{Suite: s.Name, Name: c.Name, File: c.File, Line: line, Message: msg})
+			out = append(out, TestFailure{Suite: s.Name, Name: c.Name, File: c.File, Line: line, Message: cutUTF8(msg, ciMaxMessage)})
 		}
 	}
 	for _, sub := range s.Suites {
@@ -151,12 +182,8 @@ func suiteFailures(s junitSuite) []TestFailure {
 }
 
 // CISummary renders the run as Markdown, at most maxBytes (<= 0: no limit).
-// The coverage file is read relative to the working directory.
+// Relative coverage paths resolve against r.Dir.
 func CISummary(r CIResult, failures []TestFailure, maxBytes int) string {
-	return ciSummary("", r, failures, maxBytes)
-}
-
-func ciSummary(dir string, r CIResult, failures []TestFailure, maxBytes int) string {
 	var head strings.Builder
 	fmt.Fprintf(&head, "## shipguard ci: %s %s\n\n", cell(r.Language), cell(r.Version))
 	head.WriteString("| Step | Status | Duration | Notes |\n|---|---|---|---|\n")
@@ -169,7 +196,7 @@ func ciSummary(dir string, r CIResult, failures []TestFailure, maxBytes int) str
 		fmt.Fprintf(&head, "| %s | %s | %s | %s |\n", cell(string(s.Name)), cell(s.Status),
 			s.Duration.Round(10e6), cell(strings.Join(notes, "; ")))
 	}
-	if pct, ok := coveragePercent(dir, r); ok {
+	if pct, ok := coveragePercent(r); ok {
 		fmt.Fprintf(&head, "\nCoverage: %.1f%%\n", pct)
 	}
 
@@ -209,12 +236,12 @@ func ciSummary(dir string, r CIResult, failures []TestFailure, maxBytes int) str
 }
 
 // coveragePercent reads line-rate from the first step's Cobertura file.
-func coveragePercent(dir string, r CIResult) (float64, bool) {
+func coveragePercent(r CIResult) (float64, bool) {
 	p := firstCoverage(r)
 	if p == "" {
 		return 0, false
 	}
-	data, err := os.ReadFile(resolve(dir, p))
+	data, err := readCapped(resolve(r.Dir, p))
 	if err != nil {
 		return 0, false
 	}
@@ -261,16 +288,52 @@ func WriteCI(dir string, r CIResult, getenv func(string) string) error {
 	if err := os.MkdirAll(filepath.Join(base, "test-results"), 0o755); err != nil {
 		return fmt.Errorf("create ci output dir: %w", err)
 	}
-	var files []string
-	for _, s := range r.Steps {
+	r.Dir = dir
+	r.Steps = append([]run.StepResult(nil), r.Steps...)
+	var raws [][]byte
+	var failures []TestFailure
+	seen := map[string]bool{}
+	for i := range r.Steps {
+		s := &r.Steps[i]
+		s.Warnings = append([]string(nil), s.Warnings...)
 		for _, j := range s.JUnit {
-			files = append(files, resolve(dir, j))
+			p := resolve(dir, j)
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			rs, fs, err := readJUnit(p)
+			if err != nil {
+				s.Warnings = append(s.Warnings, fmt.Sprintf("unreadable JUnit %s: %v", j, err))
+				continue
+			}
+			raws = append(raws, rs...)
+			failures = append(failures, fs...)
 		}
 	}
 	var junit bytes.Buffer
-	failures, err := MergeJUnit(files, &junit)
-	if err != nil {
-		return err
+	if len(raws) == 0 {
+		junit.WriteString("<testsuites/>\n")
+	} else {
+		junit.WriteString("<testsuites>\n")
+		for _, raw := range raws {
+			junit.Write(raw)
+			junit.WriteByte('\n')
+		}
+		junit.WriteString("</testsuites>\n")
+	}
+	var covData []byte
+	if p := firstCoverage(r); p != "" {
+		var err error
+		if covData, err = readCapped(resolve(dir, p)); err != nil {
+			for i := range r.Steps {
+				if r.Steps[i].Coverage == p {
+					r.Steps[i].Warnings = append(r.Steps[i].Warnings, fmt.Sprintf("unreadable coverage %s: %v", p, err))
+					break
+				}
+			}
+			covData = nil
+		}
 	}
 	js, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
@@ -281,7 +344,7 @@ func WriteCI(dir string, r CIResult, getenv func(string) string) error {
 		data []byte
 	}{
 		{"result.json", append(js, '\n')},
-		{"summary.md", []byte(ciSummary(dir, r, failures, ciSummaryMax))},
+		{"summary.md", []byte(CISummary(r, failures, ciSummaryMax))},
 		{filepath.Join("test-results", "junit.xml"), junit.Bytes()},
 	}
 	for _, w := range writes {
@@ -289,14 +352,13 @@ func WriteCI(dir string, r CIResult, getenv func(string) string) error {
 			return fmt.Errorf("write %s: %w", w.name, err)
 		}
 	}
-	if p := firstCoverage(r); p != "" {
-		data, err := os.ReadFile(resolve(dir, p))
-		if err != nil {
-			return fmt.Errorf("read coverage %s: %w", p, err)
-		}
-		if err := os.WriteFile(filepath.Join(base, "coverage.xml"), data, 0o644); err != nil {
+	covOut := filepath.Join(base, "coverage.xml")
+	if covData != nil {
+		if err := os.WriteFile(covOut, covData, 0o644); err != nil {
 			return fmt.Errorf("write coverage.xml: %w", err)
 		}
+	} else if err := os.Remove(covOut); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale coverage.xml: %w", err)
 	}
 	if getenv("BITBUCKET_BUILD_NUMBER") != "" {
 		root := getenv("BITBUCKET_CLONE_DIR")
@@ -318,7 +380,7 @@ func WriteCI(dir string, r CIResult, getenv func(string) string) error {
 // workflow command per failure (at most 50) to stdout.
 func CIGitHub(r CIResult, failures []TestFailure, getenv func(string) string, stdout io.Writer) error {
 	if p := getenv("GITHUB_STEP_SUMMARY"); p != "" {
-		if err := appendFile(p, ciSummary("", r, failures, ciSummaryMax)); err != nil {
+		if err := appendFile(p, CISummary(r, failures, ciSummaryMax)); err != nil {
 			return err
 		}
 	}

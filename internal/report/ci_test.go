@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/faridlamaul/shipguard/internal/ci"
 	"github.com/faridlamaul/shipguard/internal/ci/run"
@@ -208,5 +209,90 @@ func TestWriteCIBitbucketRootCopy(t *testing.T) {
 	j, err := os.ReadFile(filepath.Join(clone, "test-results", "junit.xml"))
 	if err != nil || !strings.Contains(string(j), "TestOne") {
 		t.Fatalf("%s %v", j, err)
+	}
+}
+
+func TestWriteCITruncatedJUnitWarns(t *testing.T) {
+	dir := t.TempDir()
+	r := ciFixture(t, dir)
+	writeFile(t, filepath.Join(dir, "reports/bad.xml"), "<testsuite><testcase")
+	r.Steps[0].JUnit = []string{"reports/a.xml", "reports/bad.xml", "reports/missing.xml", "reports/a.xml"}
+	if err := WriteCI(dir, r, func(string) string { return "" }); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, ".shipguard", "ci")
+	for _, f := range []string{"result.json", "summary.md", "test-results/junit.xml", "coverage.xml"} {
+		if _, err := os.Stat(filepath.Join(base, f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, _ := os.ReadFile(filepath.Join(base, "summary.md"))
+	if !strings.Contains(string(s), "unreadable JUnit reports/bad.xml") || !strings.Contains(string(s), "unreadable JUnit reports/missing.xml") || !strings.Contains(string(s), "TestOne") {
+		t.Fatalf("summary %s", s)
+	}
+	j, _ := os.ReadFile(filepath.Join(base, "test-results", "junit.xml"))
+	if strings.Count(string(j), `name="outer"`) != 1 {
+		t.Fatalf("junit %s", j)
+	}
+	if len(r.Steps[0].Warnings) != 0 {
+		t.Fatal("caller's result mutated")
+	}
+}
+
+func TestReadCappedTooLarge(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "big.xml")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(ciMaxFile + 1); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if _, err := readCapped(p); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := MergeJUnit([]string{p}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "big.xml") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMergeJUnitTruncatesMessage(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "m.xml")
+	writeFile(t, p, `<testsuite name="s"><testcase name="t"><failure message="`+strings.Repeat("é", 5000)+`"/></testcase></testsuite>`)
+	fs, err := MergeJUnit([]string{p}, &bytes.Buffer{})
+	if err != nil || len(fs) != 1 || len(fs[0].Message) > ciMaxMessage || !utf8.ValidString(fs[0].Message) {
+		t.Fatalf("%v len=%d", err, len(fs[0].Message))
+	}
+}
+
+func TestCIGitHubUsesDir(t *testing.T) {
+	dir := t.TempDir()
+	r := ciFixture(t, dir)
+	r.Dir = dir
+	sum := filepath.Join(t.TempDir(), "sum.md")
+	if err := CIGitHub(r, nil, func(k string) string {
+		if k == "GITHUB_STEP_SUMMARY" {
+			return sum
+		}
+		return ""
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(sum)
+	if !strings.Contains(string(b), "Coverage: 50.0%") {
+		t.Fatalf("%s", b)
+	}
+}
+
+func TestWriteCIRemovesStaleCoverage(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, ".shipguard/ci/coverage.xml")
+	writeFile(t, stale, "old")
+	if err := WriteCI(dir, CIResult{Language: "go"}, func(string) string { return "" }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Fatal("stale coverage.xml kept")
 	}
 }
