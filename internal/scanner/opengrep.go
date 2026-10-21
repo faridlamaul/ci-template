@@ -246,6 +246,9 @@ func (o *opengrep) Scan(ctx context.Context, t Target) ([]finding.Finding, error
 	if err != nil {
 		return nil, fmt.Errorf("read opengrep output: %w", err)
 	}
+	if err := checkReport("opengrep", raw, code); err != nil {
+		return nil, err
+	}
 	known := ruleIDs(t.Dir, append([]string{o.builtinRules}, t.Rules...))
 	fs, err := parseOpengrepRules(raw, t.Dir, known, t.DisableRules)
 	if err != nil {

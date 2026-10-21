@@ -42,6 +42,9 @@ jobs:
       - name: Test GitLab publish script
         run: make publish-test
 
+      - name: Test scanner bump script
+        run: make bump-test
+
       # Pinned, so a new govulncheck release cannot fail CI by itself.
       - name: Check vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

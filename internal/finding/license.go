@@ -18,5 +18,9 @@ func LicenseKey(spdx string) string {
 // LicensePrefix starts the ID of every license finding.
 const LicensePrefix = "license:"
 
-// IsLicense reports whether f is a license finding.
-func IsLicense(f Finding) bool { return strings.HasPrefix(f.ID, LicensePrefix) }
+// IsLicense reports whether f is a license finding: an SCA finding whose ID
+// starts with LicensePrefix. A SAST or IaC rule that happens to use that
+// prefix is not a license finding.
+func IsLicense(f Finding) bool {
+	return f.Category == CategorySCA && strings.HasPrefix(f.ID, LicensePrefix)
+}

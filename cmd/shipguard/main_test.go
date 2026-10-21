@@ -12,6 +12,7 @@ import (
 
 	"github.com/faridlamaul/shipguard/internal/finding"
 	"github.com/faridlamaul/shipguard/internal/scanner"
+	"github.com/faridlamaul/shipguard/internal/testutil/gitfixture"
 )
 
 func envOf(m map[string]string) func(string) string {
@@ -537,5 +538,94 @@ func TestRunResetsOutputsBeforeValidation(t *testing.T) {
 		if strings.Contains(out.String(), "shipguard: PASS") {
 			t.Errorf("%v: gated stale results: %s", args, out.String())
 		}
+	}
+}
+
+func TestBareCommandPrintsHelpAndExitsTwo(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run(nil, envOf(nil), &out, &errb); code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "Available Commands") {
+		t.Errorf("stderr = %q, want the help text", errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"--help"}, envOf(nil), &out, &errb); code != 0 {
+		t.Fatalf("--help exit = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "Available Commands") {
+		t.Errorf("--help stdout = %q", out.String())
+	}
+}
+
+func TestRunPrintsEachErrorOnce(t *testing.T) {
+	old := buildScanners
+	buildScanners = func(string) []scanner.Scanner { return []scanner.Scanner{blocker{}} }
+	t.Cleanup(func() { buildScanners = old })
+	var out, errb bytes.Buffer
+	if code := run([]string{"run", "--dir", t.TempDir()}, envOf(nil), &out, &errb); code != 1 {
+		t.Fatalf("exit = %d, want 1, stderr = %s", code, errb.String())
+	}
+	if n := strings.Count(errb.String(), "error:"); n != 1 {
+		t.Errorf("stderr has %d error lines, want 1:\n%s", n, errb.String())
+	}
+	errb.Reset()
+	if code := run([]string{"run", "--dir", t.TempDir(), "--scanners", "bogus"}, envOf(nil), &out, &errb); code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if n := strings.Count(errb.String(), "error:"); n != 1 {
+		t.Errorf("stderr has %d error lines, want 1:\n%s", n, errb.String())
+	}
+}
+
+// A cancelled context (what SIGINT/SIGTERM produce) makes scan and run exit 2.
+func TestCancelledRunExitsTwo(t *testing.T) {
+	old := buildScanners
+	buildScanners = func(string) []scanner.Scanner { return []scanner.Scanner{blocker{}} }
+	t.Cleanup(func() { buildScanners = old })
+	for _, sub := range []string{"scan", "run"} {
+		t.Run(sub, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			dir := t.TempDir()
+			var out, errb bytes.Buffer
+			if code := execute(ctx, []string{sub, "--dir", dir}, envOf(nil), &out, &errb); code != 2 {
+				t.Fatalf("exit = %d, want 2; stderr = %s", code, errb.String())
+			}
+			if !strings.Contains(errb.String(), "cancel") {
+				t.Errorf("stderr = %q, want it to mention the cancellation", errb.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".shipguard", "findings.json")); !os.IsNotExist(err) {
+				t.Errorf("findings.json written by a cancelled run: %v", err)
+			}
+		})
+	}
+}
+
+// A PR whose base ref resolves nowhere exits 2 and names the ref.
+func TestScanPRMissingBaseExitsTwoNamingRef(t *testing.T) {
+	r := gitfixture.New(t)
+	r.Commit("base", "a.txt")
+	r.Git("checkout", "-q", "-b", "feature")
+	r.Commit("head", "b.txt")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	var rules string
+	var dirs []string
+	fakeScanners(t, &rules, &dirs)
+	env := map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request",
+		"GITHUB_BASE_REF": "no-such-base", "GITHUB_WORKSPACE": r.Dir,
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan"}, envOf(env), &out, &errb); code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr = %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), `"no-such-base"`) {
+		t.Errorf("stderr = %q, want it to name the base ref", errb.String())
+	}
+	if len(dirs) != 0 {
+		t.Errorf("scanners ran without a base: %q", dirs)
 	}
 }

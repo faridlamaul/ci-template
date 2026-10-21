@@ -174,6 +174,9 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 
 	var results []headResult
 	for _, s := range o.Scanners {
+		if err := cancelled(ctx); err != nil {
+			return finding.Result{}, policy.Config{}, err
+		}
 		cat := s.Category()
 		if !slices.Contains(o.Categories, cat) {
 			continue
@@ -223,6 +226,10 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 			return finding.Result{}, policy.Config{}, err
 		}
 	}
+	// A cancelled run's scanner errors are not real results: write nothing.
+	if err := cancelled(ctx); err != nil {
+		return finding.Result{}, policy.Config{}, err
+	}
 
 	res := finding.Result{
 		SchemaVersion:    SchemaVersion,
@@ -244,6 +251,15 @@ func Run(ctx context.Context, o Options) (finding.Result, policy.Config, error) 
 		return finding.Result{}, policy.Config{}, err
 	}
 	return res, cfg, nil
+}
+
+// cancelled returns a wrapped context error once ctx is done (SIGINT or
+// SIGTERM), so Run stops, its deferred cleanup runs, and the caller exits 2.
+func cancelled(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("scan cancelled: %w", err)
+	}
+	return nil
 }
 
 // fullHistory makes sure a PR or scheduled scan sees the whole history: a
@@ -334,6 +350,9 @@ func markExisting(ctx context.Context, base *baseTree, results []headResult, now
 	defer os.RemoveAll(baseRaw)
 
 	for i := range results {
+		if err := cancelled(ctx); err != nil {
+			return err
+		}
 		hr := &results[i]
 		if hr.run.Status != finding.RunStatusOK || hr.run.Category == finding.CategorySecrets || len(hr.findings) == 0 {
 			continue

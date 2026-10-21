@@ -169,3 +169,59 @@ func TestSARIFSkipsInfoLicenses(t *testing.T) {
 		}
 	}
 }
+
+// TestSARIFRulePropertiesAndStatus: a rule's security-severity is the highest
+// severity among its results, whatever their order; tags are security plus the
+// category; each result carries its diff status ("" when not diffed).
+func TestSARIFRulePropertiesAndStatus(t *testing.T) {
+	r := finding.Result{Findings: []finding.Finding{
+		{ID: "dep", Category: finding.CategorySCA, Severity: finding.Low, File: "go.mod", Fingerprint: "a", Status: finding.StatusExisting},
+		{ID: "dep", Category: finding.CategorySCA, Severity: finding.Critical, File: "go.mod", Fingerprint: "b", Status: finding.StatusNew},
+		{ID: "dep", Category: finding.CategorySCA, Severity: finding.Medium, File: "go.mod", Fingerprint: "c"},
+		{ID: "tf", Category: finding.CategoryIaC, Severity: finding.Medium, File: "main.tf", Fingerprint: "d"},
+	}}
+	_, doc := renderSARIF(t, r)
+	run := doc["runs"].([]any)[0].(map[string]any)
+	rules := run["tool"].(map[string]any)["driver"].(map[string]any)["rules"].([]any)
+	want := map[string]struct{ sev, tags string }{
+		"dep": {"9.5", "security,sca"},
+		"tf":  {"5.5", "security,iac"},
+	}
+	if len(rules) != len(want) {
+		t.Fatalf("rules = %v", rules)
+	}
+	for _, x := range rules {
+		m := x.(map[string]any)
+		props := m["properties"].(map[string]any)
+		var tags []string
+		for _, tg := range props["tags"].([]any) {
+			tags = append(tags, tg.(string))
+		}
+		w := want[m["id"].(string)]
+		if props["security-severity"] != w.sev || strings.Join(tags, ",") != w.tags {
+			t.Errorf("rule %v: properties %v, want security-severity %s tags %s", m["id"], props, w.sev, w.tags)
+		}
+	}
+	var statuses []string
+	for _, x := range run["results"].([]any) {
+		st := "" // an empty status leaves properties out
+		if props, ok := x.(map[string]any)["properties"].(map[string]any); ok {
+			st, _ = props["status"].(string)
+		}
+		statuses = append(statuses, st)
+	}
+	if got := strings.Join(statuses, ","); got != "existing,new,," {
+		t.Errorf("statuses = %q, want %q", got, "existing,new,,")
+	}
+}
+
+func TestSARIFOmitsEmptyStatus(t *testing.T) {
+	var buf bytes.Buffer
+	r := finding.Result{Findings: []finding.Finding{{ID: "r1", Category: finding.CategorySAST, Severity: finding.High, File: "a.go", Line: 1, Fingerprint: "fp"}}}
+	if err := WriteSARIF(&buf, r, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), `"status"`) {
+		t.Errorf("empty status emitted: %s", buf.String())
+	}
+}

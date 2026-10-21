@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -312,5 +313,94 @@ func TestParseAcceptsValidGlobs(t *testing.T) {
 		"exceptions:\n  - id: CVE-1\n    path: \"src/**/*.go\"\n    reason: r\n    expires: 2030-01-01\n"
 	if _, err := Parse([]byte(in)); err != nil {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// validateBoth runs the parser and the schema on one YAML document.
+func validateBoth(t *testing.T, schema *jsonschema.Schema, in string) (perr, serr error) {
+	t.Helper()
+	_, perr = Parse([]byte(in))
+	serr = schema.Validate(yamlToJSONValue(t, []byte(in)))
+	return perr, serr
+}
+
+// per_scanner accepts ms, s, m and h units, with digits before any decimal
+// point, in both the parser and the schema.
+func TestPerScannerUnitsAgree(t *testing.T) {
+	schema := compile(t, "../../schema/shipguard.schema.json")
+	for in, wantOK := range map[string]bool{
+		"15m": true, "1h": true, "90s": true, "1h30m": true, "1.5h": true, "2h45m30s": true, "0m1s": true,
+		"500ms": true, "1m500ms": true, "90000ms": true, "1000us": false, "1000µs": false, "1000000000ns": false, "0ms": false,
+		".5s": false, "5.m": false, "+5m": false, "-5m": false, "0s": false, "0.0h": false, "5": false, "m": false,
+	} {
+		t.Run(in, func(t *testing.T) {
+			perr, serr := validateBoth(t, schema, "timeouts:\n  per_scanner: \""+in+"\"\n")
+			if (perr == nil) != wantOK {
+				t.Errorf("parser: err=%v, want ok=%v", perr, wantOK)
+			}
+			if perr != nil && !errors.Is(perr, ErrConfig) {
+				t.Errorf("parser: err=%v, want ErrConfig", perr)
+			}
+			if (serr == nil) != wantOK {
+				t.Errorf("schema: err=%v, want ok=%v", serr, wantOK)
+			}
+		})
+	}
+}
+
+// The schema pattern rejects impossible months and days, but it cannot know
+// month lengths or leap years: the parser is authoritative for those, and the
+// schema's description says so.
+func TestExpiresDatesParserAuthoritative(t *testing.T) {
+	schema := compile(t, "../../schema/shipguard.schema.json")
+	for _, tc := range []struct {
+		date               string
+		parserOK, schemaOK bool
+	}{
+		{"2026-12-31", true, true},
+		{"2028-02-29", true, true},
+		{"2026-13-01", false, false},
+		{"2026-00-10", false, false},
+		{"2026-12-32", false, false},
+		{"2026-12-00", false, false},
+		{"2026-1-01", false, false},
+		// Looser schema: valid shape, impossible day.
+		{"2026-02-30", false, true},
+		{"2027-02-29", false, true},
+		{"2026-04-31", false, true},
+	} {
+		t.Run(tc.date, func(t *testing.T) {
+			perr, serr := validateBoth(t, schema, "exceptions:\n  - {id: x, reason: r, expires: \""+tc.date+"\"}\n")
+			if (perr == nil) != tc.parserOK {
+				t.Errorf("parser: err=%v, want ok=%v", perr, tc.parserOK)
+			}
+			if (serr == nil) != tc.schemaOK {
+				t.Errorf("schema: err=%v, want ok=%v", serr, tc.schemaOK)
+			}
+		})
+	}
+	raw, err := os.ReadFile("../../schema/shipguard.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "the parser is authoritative") {
+		t.Error("schema expires description must say the parser is authoritative for impossible dates")
+	}
+}
+
+// An empty file, a comments-only file and a null document all mean "use the
+// defaults", in the parser and in the schema.
+func TestEmptyConfigIsDefaults(t *testing.T) {
+	schema := compile(t, "../../schema/shipguard.schema.json")
+	for _, in := range []string{"", "\n", "# only a comment\n", "~\n", "null\n", "---\n"} {
+		c, perr := Parse([]byte(in))
+		if perr != nil {
+			t.Errorf("Parse(%q) err = %v", in, perr)
+		} else if !reflect.DeepEqual(c, Defaults()) {
+			t.Errorf("Parse(%q) = %+v, want Defaults()", in, c)
+		}
+		if serr := schema.Validate(yamlToJSONValue(t, []byte(in))); serr != nil {
+			t.Errorf("schema(%q) err = %v", in, serr)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/faridlamaul/shipguard/internal/testutil/gitfixture"
@@ -258,5 +259,31 @@ func TestSetConfigAppliesToEveryCall(t *testing.T) {
 	out, err := git(dir, "config", "--get", "shipguard.test")
 	if err != nil || strings.TrimSpace(string(out)) != "yes" {
 		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
+// TestSetConfigConcurrent must pass under -race: SetConfig may run while
+// git calls read the config.
+func TestSetConfigConcurrent(t *testing.T) {
+	isolate(t)
+	dir := t.TempDir()
+	if _, err := git(dir, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { SetConfig(nil) })
+	kv := []string{"shipguard.test=yes"}
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(2)
+		go func() { defer wg.Done(); SetConfig(kv) }()
+		go func() { defer wg.Done(); _, _ = git(dir, "config", "--get", "shipguard.test") }()
+	}
+	wg.Wait()
+	// The caller's slice is copied: changing it later has no effect.
+	SetConfig(kv)
+	kv[0] = "shipguard.test=no"
+	out, err := git(dir, "config", "--get", "shipguard.test")
+	if err != nil || strings.TrimSpace(string(out)) != "yes" {
+		t.Fatalf("out=%q err=%v; want yes", out, err)
 	}
 }

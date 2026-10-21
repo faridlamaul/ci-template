@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -263,6 +264,10 @@ func child(n *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
+// durationRe is the per_scanner form the schema allows: ms, s, m and h units
+// only, with digits before any decimal point (no sign, no ".5s").
+var durationRe = regexp.MustCompile(`^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$`)
+
 // checkNodes rejects shapes that would silently disable gating or that the
 // typed decode cannot distinguish (null/empty policy, numeric durations).
 func checkNodes(doc *yaml.Node) error {
@@ -278,8 +283,8 @@ func checkNodes(doc *yaml.Node) error {
 			return errors.New("policy.fail_on must not be null or empty")
 		}
 	}
-	if d := child(child(root, "timeouts"), "per_scanner"); d != nil && d.Tag != "!!str" {
-		return errors.New("timeouts.per_scanner must be a duration string such as \"15m\"")
+	if d := child(child(root, "timeouts"), "per_scanner"); d != nil && (d.Tag != "!!str" || !durationRe.MatchString(d.Value)) {
+		return fmt.Errorf("line %d: timeouts.per_scanner must be a duration string in ms, s, m or h units such as \"15m\" or \"1h30m\"", d.Line)
 	}
 	return nil
 }

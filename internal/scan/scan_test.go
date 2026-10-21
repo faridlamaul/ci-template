@@ -29,6 +29,7 @@ type fake struct {
 	base    []finding.Finding
 	headErr error
 	baseErr error
+	onBase  func() // called on a base scan, before it returns
 	targets []scanner.Target
 }
 
@@ -38,6 +39,9 @@ func (f *fake) Scan(_ context.Context, t scanner.Target) ([]finding.Finding, err
 	f.targets = append(f.targets, t)
 	if t.Dir == f.headDir {
 		return slices.Clone(f.head), f.headErr
+	}
+	if f.onBase != nil {
+		f.onBase()
 	}
 	return slices.Clone(f.base), f.baseErr
 }
@@ -900,5 +904,57 @@ func TestScanPassesSASTDefaultExcludes(t *testing.T) {
 				t.Fatalf("targets = %+v, want SASTDefaultExcludes=%v", sast.targets, tc.want)
 			}
 		})
+	}
+}
+
+// A run cancelled mid-scan (SIGINT/SIGTERM) returns the context error, writes
+// no findings.json, and still removes the base worktree.
+func TestScanCancelledCleansUp(t *testing.T) {
+	r, _ := prRepo(t, "", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wt string
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir,
+		head: []finding.Finding{fnd("opengrep", finding.CategorySAST, "R1", "src/b.go")}}
+	sast.onBase = func() {
+		wt = sast.targets[len(sast.targets)-1].Dir
+		cancel()
+	}
+	sca := &fake{name: "osv", cat: finding.CategorySCA, headDir: r.Dir}
+	_, _, err := Run(ctx, Options{Dir: r.Dir, Ctx: prCtx(), Categories: allCats(),
+		Scanners: []scanner.Scanner{sast, sca}, Now: fixedNow})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(filepath.Join(r.Dir, ".shipguard", "findings.json")); !os.IsNotExist(err) {
+		t.Errorf("findings.json written by a cancelled run: %v", err)
+	}
+	if wt == "" {
+		t.Fatal("base scan did not run")
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Errorf("base worktree %s left behind: %v", wt, err)
+	}
+	if n := strings.Count(r.Git("worktree", "list"), "\n"); n != 0 {
+		t.Errorf("worktrees still registered:\n%s", r.Git("worktree", "list"))
+	}
+}
+
+// A run cancelled before a scanner starts does not start it.
+func TestScanCancelledSkipsRemainingScanners(t *testing.T) {
+	isolate(t)
+	r := gitfixture.New(t)
+	r.Commit("one", "a.go")
+	ctx, cancel := context.WithCancel(context.Background())
+	sast := &fake{name: "opengrep", cat: finding.CategorySAST, headDir: r.Dir}
+	sca := &fake{name: "osv", cat: finding.CategorySCA, headDir: r.Dir}
+	cancel()
+	_, _, err := Run(ctx, Options{Dir: r.Dir, Categories: allCats(),
+		Scanners: []scanner.Scanner{sast, sca}, Now: fixedNow})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if len(sast.targets)+len(sca.targets) != 0 {
+		t.Error("scanners started after cancellation")
 	}
 }

@@ -6,14 +6,21 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+
+# One bump at a time: runs share the fixed bump branch.
+concurrency:
+  group: bump-scanners
+  cancel-in-progress: false
 
 jobs:
   bump:
     # Never runs on forks: they have no write token and no business bumping.
     if: github.repository == 'faridlamaul/shipguard'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,25 +54,31 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         run: make e2e
 
-      - name: Open pull request
+      # The bump lives on one fixed branch that every run force-updates, so a
+      # newer bump replaces the previous one instead of opening another PR.
+      - name: Open or update pull request
         if: steps.diff.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
         run: |
-          branch="chore/bump-scanners-${RUN_ID}"
+          branch="chore/bump-scanners"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
+          git checkout -B "$branch"
           git add versions.env
           git commit -m "chore(deps): bump pinned scanners"
           # Checkout used persist-credentials: false, so authenticate the push
-          # explicitly with the job token.
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "$branch"
-          gh pr create \
-            --repo "$REPOSITORY" \
-            --head "$branch" \
-            --base main \
-            --title "chore(deps): bump pinned scanners" \
-            --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env. Checksums were recomputed from the upstream release files and verified against the downloaded assets. Unit tests and the image end-to-end test passed in the bump workflow."
+          # explicitly with the job token. The branch is owned by this workflow.
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          open_pr="$(gh pr list --repo "$REPOSITORY" --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open_pr" ]; then
+            echo "Updated the open bump PR #$open_pr"
+          else
+            gh pr create \
+              --repo "$REPOSITORY" \
+              --head "$branch" \
+              --base main \
+              --title "chore(deps): bump pinned scanners" \
+              --body "Automated bump of gitleaks, opengrep, osv-scanner and trivy in versions.env. Checksums were recomputed from the upstream release files and verified against the downloaded assets. Unit tests and the image end-to-end test passed in the bump workflow."
+          fi

@@ -422,7 +422,7 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 	}
 
 	// Exit 128 means no packages were found: zero findings, not an error.
-	noPackages, extractFailed := false, false
+	noPackages, extractFailed, exitCode := false, false, 0
 	err = Retry(ctx, 3, osvSleep, func() error {
 		// Stderr is only inspected, never surfaced: it can echo paths and
 		// package names.
@@ -435,6 +435,7 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 			// Deterministic, so not retried.
 			extractFailed = osvExtractionFailed(stderr)
 			noPackages = code == 128
+			exitCode = code
 			return nil
 		}
 		return fmt.Errorf("osv-scanner exited with code %d", code)
@@ -452,8 +453,16 @@ func (o *osv) Scan(ctx context.Context, t Target) ([]finding.Finding, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read osv-scanner output: %w", err)
 		}
+		if err := checkReport("osv-scanner", raw, exitCode); err != nil {
+			return nil, err
+		}
 		if fs, err = parseOSV(raw, t.Dir); err != nil {
 			return nil, err
+		}
+		// Exit 1 means vulnerabilities were found; a report without any is
+		// not trustworthy.
+		if exitCode == 1 && len(fs) == 0 {
+			return nil, errors.New("osv-scanner exited with code 1 but its report has no vulnerabilities")
 		}
 	}
 	if t.RawDir != "" {

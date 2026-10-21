@@ -3,7 +3,7 @@ INSTALL_DIR=$(HOME)/.local/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS=-s -w -X main.version=$(VERSION)
 
-.PHONY: all build install test vet fmt-check clean image-test e2e docs-check gitlab-lint publish-test
+.PHONY: all build install test vet fmt-check clean image-test e2e docs-check gitlab-lint publish-test bump-test
 
 all: build
 
@@ -42,6 +42,10 @@ docs-check:
 # Tests scripts/publish-gitlab.sh against local bare repositories (no network).
 publish-test:
 	./scripts/publish-gitlab-test.sh
+
+# Tests scripts/bump-scanners.sh with a fake gh (no network).
+bump-test:
+	./scripts/bump-scanners-test.sh
 
 # Renders the GitLab template and lints it (and a consumer-style pipeline that
 # includes it) on gitlab.com against the private test project.

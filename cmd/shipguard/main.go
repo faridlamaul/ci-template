@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/faridlamaul/shipguard/internal/exitcode"
@@ -62,13 +64,32 @@ type globals struct {
 // SHIPGUARD_-prefixed) Bitbucket pipe variable.
 var bareVars = map[string]bool{"scanners": true, "mode": true, "config": true, "code-insights": true}
 
+// errReported marks an error whose details the command already printed.
+var errReported = errors.New("already reported")
+
 // run executes the CLI with injected arguments, environment, and writers and
-// returns the process exit code.
+// returns the process exit code. SIGINT and SIGTERM cancel the run's context:
+// the scan stops, deferred cleanup (base worktree, temp dirs) runs, and the
+// exit code is 2. A second signal kills the process: after the first one the
+// default signal handling is restored, so a hung cleanup can be interrupted.
 func run(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return execute(ctx, args, getenv, stdout, stderr)
+}
+
+// execute runs the command tree with ctx and returns the exit code.
+func execute(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	root, _ := newRoot(getenv, stdout, stderr)
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
-		fmt.Fprintf(stderr, "error: %s\n", err)
+	if err := root.ExecuteContext(ctx); err != nil {
+		if !errors.Is(err, errReported) {
+			fmt.Fprintf(stderr, "error: %s\n", err)
+		}
 		var ee *exitcode.Err
 		if errors.As(err, &ee) {
 			return ee.Code
@@ -87,6 +108,12 @@ func newRoot(getenv func(string) string, stdout, stderr io.Writer) (*cobra.Comma
 		Short:         "Security scanning and policy gate for GitHub, GitLab, and Bitbucket",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Bare `shipguard` is a usage error: print the help, exit 2.
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SetOut(stderr)
+			_ = cmd.Help()
+			return &exitcode.Err{Code: exitcode.Error, Err: errors.New("missing command")}
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			gitx.SetConfig(platform.BitbucketPipeGitConfig(getenv))
 			return resolveFlags(cmd.Flags(), g, getenv)
@@ -417,7 +444,8 @@ func runCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *c
 				}
 			}
 			if code != exitcode.Pass {
-				return &exitcode.Err{Code: code, Err: errors.New("run failed")}
+				// note already printed every error
+				return &exitcode.Err{Code: code, Err: errReported}
 			}
 			return nil
 		},

@@ -1,10 +1,14 @@
-FROM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
+# The builder runs on the build host's platform and cross-compiles, so an arm64
+# image does not compile Go under QEMU emulation.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
 ARG VERSION=dev
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /shipguard ./cmd/shipguard
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /shipguard ./cmd/shipguard
 # Only the rule definitions ship in the image, not the vulnerable test targets.
 RUN mkdir /rules \
     && find rules \( -name '*.yaml' -o -name LICENSE -o -name README.md \) -print \

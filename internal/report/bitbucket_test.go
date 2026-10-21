@@ -303,3 +303,95 @@ func TestCodeInsightsProxyDefault(t *testing.T) {
 		})
 	}
 }
+
+func TestCodeInsightsInvalidProxyIsUploadError(t *testing.T) {
+	for _, p := range []string{"not a url", "localhost:29418", "ftp://proxy:21", "http://", "http://user:hunter2@", "://x"} {
+		ci := CodeInsights{Proxy: p, Repo: "ws/repo", Commit: "abc"}
+		err := ci.Publish(context.Background(), manyFindings(1), policy.Decision{})
+		if !errors.Is(err, ErrUpload) || !strings.Contains(err.Error(), "SHIPGUARD_BITBUCKET_PROXY") {
+			t.Errorf("proxy %q: err = %v, want ErrUpload naming SHIPGUARD_BITBUCKET_PROXY", p, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "hunter2") {
+			t.Errorf("proxy %q: error leaks the proxy value: %v", p, err)
+		}
+	}
+	env := map[string]string{"BITBUCKET_BUILD_NUMBER": "1", "BITBUCKET_REPO_FULL_NAME": "ws/repo",
+		"BITBUCKET_COMMIT": "abc", "SHIPGUARD_BITBUCKET_PROXY": "bogus"}
+	if err := Report(context.Background(), t.TempDir(), "", finding.Result{}, policy.Decision{}, func(k string) string { return env[k] }); !errors.Is(err, ErrUpload) {
+		t.Errorf("Report with invalid proxy env: err = %v, want ErrUpload", err)
+	}
+}
+
+func TestCodeInsightsProxyTransport(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodGet, "http://api.bitbucket.org/2.0", nil)
+	cases := []struct {
+		name, proxy, token, want string
+	}{
+		{"none", "", "", ""},
+		{"default", "http://localhost:29418", "", "http://localhost:29418"},
+		{"token bypasses proxy", "http://localhost:29418", "tok", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := CodeInsights{Proxy: tc.proxy, Token: tc.token}.newClient()
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := c.Transport.(*http.Transport)
+			got := ""
+			if tr.Proxy != nil {
+				u, err := tr.Proxy(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if u != nil {
+					got = u.String()
+				}
+			}
+			if got != tc.want {
+				t.Errorf("proxy = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCodeInsightsAnnotationPostFailure(t *testing.T) {
+	var posts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts++
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, "boom")
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	ci := CodeInsights{BaseURL: srv.URL, Repo: "ws/repo", Commit: "abc"}
+	err := ci.Publish(context.Background(), manyFindings(250), policy.Decision{})
+	if !errors.Is(err, ErrUpload) || !strings.Contains(err.Error(), "POST") || !strings.Contains(err.Error(), "500") {
+		t.Fatalf("err = %v, want ErrUpload for the failed POST", err)
+	}
+	if posts != 1 {
+		t.Errorf("posts = %d, want 1 (stop at the first failed batch)", posts)
+	}
+}
+
+func TestTruncateBytesKeepsRunesWhole(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"abc", 5, "abc"},
+		{"abc", 2, "ab"},
+		{"aé", 2, "a"}, // é is 2 bytes: cutting at 2 would split it
+		{"aé", 3, "aé"},
+		{"€", 2, ""},
+	}
+	for _, tc := range cases {
+		if got := truncateBytes(tc.in, tc.n); got != tc.want {
+			t.Errorf("truncateBytes(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+		}
+	}
+}

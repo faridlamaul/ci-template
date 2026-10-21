@@ -157,6 +157,10 @@ func glVulnFor(scanType string, f finding.Finding, sha string) glVuln {
 		Severity:    glSeverity(f.Severity),
 		Identifiers: []glIdentifier{glIdent(f.ID)},
 	}
+	if finding.IsLicense(f) {
+		// Identifier types are analyzer-dependent in the schema.
+		v.Identifiers[0].Type = "license"
+	}
 	for _, a := range f.Aliases {
 		v.Identifiers = append(v.Identifiers, glIdent(a))
 	}

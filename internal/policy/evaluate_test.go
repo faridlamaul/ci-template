@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -221,5 +222,73 @@ func TestZeroDecisionEnforces(t *testing.T) {
 	d := Decision{Blocking: []finding.Finding{fnd("s", finding.CategorySecrets, finding.High, false)}}
 	if d.ExitCode() != 1 {
 		t.Fatalf("exit = %d, want 1", d.ExitCode())
+	}
+}
+
+// A "license:" id counts as a license only for an SCA finding; any other
+// category is gated by its own threshold.
+func TestLicensePrefixOnlyForSCA(t *testing.T) {
+	cfg := Defaults()
+	sast := fnd("license:header-missing", finding.CategorySAST, finding.High, false)
+	if d := Evaluate(res(sast), cfg, false, evalNow); len(d.Blocking) != 1 || d.ExitCode() != 1 {
+		t.Fatalf("SAST finding with a license: id must block at high: %+v", d.Blocking)
+	}
+	iac := fnd("license:x", finding.CategoryIaC, finding.Critical, false)
+	if d := Evaluate(res(iac), cfg, false, evalNow); len(d.Blocking) != 1 {
+		t.Fatalf("IaC finding with a license: id must block at critical: %+v", d.Blocking)
+	}
+	// An SCA license that is not denied still never blocks.
+	lic := fnd("license:MIT", finding.CategorySCA, finding.Critical, true)
+	if d := Evaluate(res(lic), cfg, false, evalNow); len(d.Blocking) != 0 {
+		t.Fatalf("allowed license must not block: %+v", d.Blocking)
+	}
+}
+
+// Suppressed findings still count in Total and New, are never blocking, and on
+// a PR an existing finding matched by an active exception is listed as
+// suppressed (report.counts subtracts it from "existing").
+func TestEvaluateSuppressedCounting(t *testing.T) {
+	exp := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	cfg := Defaults()
+	cfg.Exceptions = []Exception{
+		{ID: "sup-new", Reason: "r", Expires: exp},
+		{ID: "sup-old", Reason: "r", Expires: exp},
+		{ID: "expired", Reason: "r", Expires: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}
+	supNew := fnd("sup-new", finding.CategorySAST, finding.High, false)
+	supOld := fnd("sup-old", finding.CategorySAST, finding.High, false)
+	supOld.Status = finding.StatusExisting
+	expired := fnd("expired", finding.CategorySAST, finding.High, false)
+	below := fnd("below", finding.CategorySAST, finding.Low, false)
+	old := fnd("old", finding.CategorySAST, finding.High, false)
+	old.Status = finding.StatusExisting
+
+	d := Evaluate(res(supNew, supOld, expired, below, old), cfg, true, evalNow)
+	if d.Total != 5 || d.New != 3 {
+		t.Errorf("total/new = %d/%d, want 5/3", d.Total, d.New)
+	}
+	ids := func(fs []finding.Finding) []string {
+		out := []string{}
+		for _, f := range fs {
+			out = append(out, f.ID)
+		}
+		return out
+	}
+	if got := ids(d.Suppressed); !reflect.DeepEqual(got, []string{"sup-new", "sup-old"}) {
+		t.Errorf("suppressed = %v", got)
+	}
+	if got := ids(d.Blocking); !reflect.DeepEqual(got, []string{"expired"}) {
+		t.Errorf("blocking = %v", got)
+	}
+	if len(d.Expired) != 1 || d.Expired[0].ID != "expired" {
+		t.Errorf("expired = %+v", d.Expired)
+	}
+	if d.Result != "fail" || d.ExitCode() != 1 {
+		t.Errorf("result=%s exit=%d", d.Result, d.ExitCode())
+	}
+	// Suppressing every blocking finding passes the gate.
+	d = Evaluate(res(supNew, supOld, below), cfg, false, evalNow)
+	if d.Result != "pass" || len(d.Suppressed) != 2 || d.Total != 3 {
+		t.Errorf("all suppressed: %+v", d)
 	}
 }
