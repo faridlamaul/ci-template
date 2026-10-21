@@ -185,7 +185,7 @@ func golden(t *testing.T, name string, got []byte) {
 }
 
 func TestStepsRust(t *testing.T) {
-	for _, c := range []string{"lib", "bin", "nolock"} {
+	for _, c := range []string{"lib", "binary", "nolock"} {
 		t.Run(c, func(t *testing.T) {
 			dir := filepath.Join("testdata", c)
 			det, err := Rust{}.Detect(dir, defaults)
