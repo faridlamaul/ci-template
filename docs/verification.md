@@ -13,7 +13,7 @@ Results of the questions that had to be answered on the real platforms before th
 | V7 | done: see below |
 | B1 | done: see below |
 | B2 | done: see below |
-| B3 | pending: Bitbucket API unavailable when v1.3.0 shipped; rerun on bitbucket.org/faridlamaul/shipguard-test |
+| B3 | done: see below |
 | B4 | done: see below |
 
 ## V1: can a Bitbucket pipe use a GHCR image, pinned by tag and by digest?
@@ -150,6 +150,19 @@ After `apt-get install curl ca-certificates` the four slim images (`node`, `pyth
 **Evidence.** Pipeline 2973137959 of gitlab.com/faridlamaul/shipguard succeeded. The `shipguard-ci` job downloaded the v1.3.0 linux binary, checked its SHA-256 and ran `shipguard ci`. The job's coverage reads 100.0 from the `Coverage:` line, the pipeline test report shows 1 test and 0 failures, and the job carries `junit` and `cobertura` report artifacts. The CI/CD Catalog lists the `ci` and `scan` components for 1.3.0.
 
 **Result.** GitLab parses both reports and the coverage regex from a component job. No fallback is needed.
+
+## B3: does Bitbucket pick up the JUnit report?
+
+**Method.** The rendered v1.3.0 snippet ran on branch `test/ci-b3` of `bitbucket.org/faridlamaul/shipguard-test`, with a Go fixture in `goapp/` selected through `SHIPGUARD_DIR`. The default pipeline ran as run #8 on 2026-10-21 on an x86 runner.
+
+**Evidence.**
+- The archive SHA-256 check passed and all steps passed. Coverage read 100%.
+- The trailing `echo` after `*shipguard-ci` ran, which confirms the shared-shell fix.
+- The test-report collector logged "Found 2 test report files" and "total number tests is 2" for one test: it found both `<clone>/test-results/junit.xml` (the copy `shipguard ci` wrote on Bitbucket) and `<project>/.shipguard/ci/test-results/junit.xml`.
+
+**Result.** Bitbucket scans `**/test-results/**/*.xml` including hidden directories, so it finds `.shipguard/ci/test-results/junit.xml` by itself. The clone-root copy only double-counted every test and is removed in this change.
+
+**Chosen path.** `shipguard ci` writes the JUnit only under `.shipguard/ci/test-results/`. No copy and no extra step are needed.
 
 ## B4: do the setup actions and the release path work on GitHub-hosted runners?
 

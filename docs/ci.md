@@ -91,7 +91,7 @@ Per platform:
 
 - **GitHub**: the summary goes to the job summary and failing tests become `::error file=...` annotations (at most 50). The composite action uploads `.shipguard/ci/` as the `shipguard-ci` artifact.
 - **GitLab**: `artifacts:reports:junit` (Tests tab), `artifacts:reports:coverage_report` (Cobertura, line coverage in merge requests) and a `coverage:` regex that reads the `Coverage: NN.N%` line of the summary.
-- **Bitbucket**: with `BITBUCKET_BUILD_NUMBER` set, the JUnit is also written to `test-results/junit.xml` at the clone root, which fills the Tests tab.
+- **Bitbucket**: no copy is needed. Bitbucket scans `**/test-results/**/*.xml`, hidden directories included, so it finds `.shipguard/ci/test-results/junit.xml` itself and fills the Tests tab.
 
 ## GitHub
 
@@ -203,7 +203,7 @@ Optional variables, exported before the shared script line: `SHIPGUARD_DIR` (pro
 
 `-slim` and other minimal images lack `curl`; the step stops with a message. Install it first with `apt-get update && apt-get install -y curl ca-certificates`.
 
-Test reports appear on their own: `shipguard ci` writes `test-results/junit.xml` at the clone root when `BITBUCKET_BUILD_NUMBER` is set, and Bitbucket collects `**/test-results/**/*.xml` into the Tests tab. The summary is printed at the end of the step log, and the step keeps the exit code of `shipguard ci`.
+Test reports appear on their own: Bitbucket collects `**/test-results/**/*.xml`, hidden directories included, so it finds `.shipguard/ci/test-results/junit.xml` itself and fills the Tests tab. The summary is printed at the end of the step log, and the step keeps the exit code of `shipguard ci`.
 
 ## Security
 

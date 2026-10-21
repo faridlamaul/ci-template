@@ -15,9 +15,10 @@
 # secured variables. The binary is verified against the rendered SHA-256
 # before it is extracted and is run from a temp directory.
 #
-# Bitbucket collects test reports from **/test-results/**/*.xml, and
-# `shipguard ci` writes test-results/junit.xml at the clone root, so the Tests
-# tab fills without extra steps. Slim images need curl and ca-certificates.
+# Bitbucket collects test reports from **/test-results/**/*.xml, hidden
+# directories included, so it finds .shipguard/ci/test-results/junit.xml
+# itself and the Tests tab fills without extra steps. Slim images need curl
+# and ca-certificates.
 #
 # The image selects the toolchain: the version files of the repository
 # (.nvmrc, go.mod, ...) are compared with it and a mismatch prints a warning.
