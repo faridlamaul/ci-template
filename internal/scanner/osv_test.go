@@ -449,3 +449,72 @@ func TestOSVExcludedDirIsNotWalked(t *testing.T) {
 		t.Fatalf("fs=%v err=%v args=%v", fs, err, args)
 	}
 }
+
+func TestOSVFixedForInstalledVersion(t *testing.T) {
+	const twoRanges = `{"type":"ECOSYSTEM","events":[{"introduced":"1.0"},{"fixed":"1.2"}]},
+		{"type":"ECOSYSTEM","events":[{"introduced":"2.0"},{"fixed":"2.3"}]}`
+	cases := []struct {
+		name, pkg, version, ecosystem, advisory, ranges, want string
+	}{
+		{"second range", "a", "2.1", "PyPI", "a", twoRanges, "2.3"},
+		{"first range", "a", "1.1", "PyPI", "a", twoRanges, "1.2"},
+		{"pre-release before release", "a", "2.3-rc1", "npm", "a", twoRanges, "2.3"},
+		{"numeric not lexical", "a", "1.10", "npm", "a",
+			`{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.9"},{"introduced":"1.10"},{"fixed":"1.11"}]}`, "1.11"},
+		{"single range of pairs", "a", "2.1", "Go", "a",
+			`{"type":"SEMVER","events":[{"introduced":"1.0"},{"fixed":"1.2"},{"introduced":"2.0"},{"fixed":"2.3"}]}`, "2.3"},
+		{"git range ignored", "a", "2.1", "Go", "a",
+			`{"type":"GIT","events":[{"introduced":"0"},{"fixed":"abc123"}]},` + twoRanges, "2.3"},
+		{"PyPI PEP 503 case", "PyYAML", "2.1", "PyPI", "pyyaml", twoRanges, "2.3"},
+		{"PyPI PEP 503 separators", "ruamel_yaml", "2.1", "PyPI", "ruamel-yaml", twoRanges, "2.3"},
+		{"PyPI separator runs", "a.-_b", "2.1", "PyPI", "A-b", twoRanges, "2.3"},
+		{"npm names exact", "Foo", "2.1", "npm", "foo", twoRanges, ""},
+		{"unparseable version uses first fix", "a", "not a version", "PyPI", "a", twoRanges, "1.2"},
+		{"version in no range uses first fix", "a", "3.0", "PyPI", "a", twoRanges, "1.2"},
+		{"last_affected only has no fix", "a", "1.1", "PyPI", "a",
+			`{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"last_affected":"1.5"}]}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			raw := `{"results":[{"source":{"path":"requirements.txt"},"packages":[{"package":{"name":"` + c.pkg +
+				`","version":"` + c.version + `","ecosystem":"` + c.ecosystem + `"},
+				"vulnerabilities":[{"id":"V1","affected":[{"package":{"name":"` + c.advisory +
+				`","ecosystem":"` + c.ecosystem + `"},"ranges":[` + c.ranges + `]}]}]}]}]}`
+			fs, err := parseOSV([]byte(raw), "")
+			if err != nil || len(fs) != 1 {
+				t.Fatalf("%v %v", fs, err)
+			}
+			if fs[0].FixedVersion != c.want || fs[0].FixAvailable != (c.want != "") {
+				t.Fatalf("fixed = %q, available = %v; want %q", fs[0].FixedVersion, fs[0].FixAvailable, c.want)
+			}
+		})
+	}
+}
+
+func TestOSVCompareVersions(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"1.2", "1.2", 0},
+		{"1.2", "1.2.0", 0},
+		{"1.9", "1.10", -1},
+		{"2.0", "1.10", 1},
+		{"1.0-rc1", "1.0", -1},
+		{"1.0", "1.0-rc1", 1},
+		{"1.0-alpha", "1.0-beta", -1},
+		{"v1.2.3", "1.2.4", -1},
+		{"1.0+build1", "1.0", 0},
+	}
+	for _, c := range cases {
+		got, ok := compareVersions(c.a, c.b)
+		if !ok || got != c.want {
+			t.Errorf("compareVersions(%q, %q) = %d, %v; want %d", c.a, c.b, got, ok, c.want)
+		}
+	}
+	for _, bad := range []string{"", "not a version", "1..2", "abc"} {
+		if _, ok := compareVersions(bad, "1.0"); ok {
+			t.Errorf("compareVersions(%q) ok, want unparseable", bad)
+		}
+	}
+}
