@@ -70,14 +70,24 @@ func runStep(ctx context.Context, dir string, s ci.Step, out io.Writer) StepResu
 	fail := func(reason string, code int) {
 		r.Status, r.Reason, r.ExitCode = "failed", reason, code
 	}
+	// interrupt classifies a done step context as cancelled or timeout.
+	interrupt := func(code int) bool {
+		if sctx.Err() == nil {
+			return false
+		}
+		if ctx.Err() != nil {
+			fail("cancelled", code)
+		} else {
+			fail("timeout", code)
+		}
+		return true
+	}
+	if len(s.Cmds) == 0 {
+		fail("no commands", 0) // producer bug: a step that ran nothing is never a pass
+	}
 	for _, c := range s.Cmds {
 		code, err := runCmd(sctx, dir, c, out)
-		if sctx.Err() != nil {
-			if ctx.Err() != nil {
-				fail("cancelled", code)
-			} else {
-				fail("timeout", code)
-			}
+		if interrupt(code) {
 			break
 		}
 		if err != nil {
@@ -93,12 +103,13 @@ func runStep(ctx context.Context, dir string, s ci.Step, out io.Writer) StepResu
 	}
 	if r.Status == "passed" && s.After != nil {
 		if err := s.After(sctx, dir); err != nil {
-			if sctx.Err() != nil && ctx.Err() != nil {
-				fail("cancelled", 0)
-			} else {
+			if !interrupt(0) {
 				fail("after: "+err.Error(), 0)
 			}
 		}
+	}
+	if r.Status == "passed" {
+		interrupt(0)
 	}
 
 	for _, g := range s.JUnit {

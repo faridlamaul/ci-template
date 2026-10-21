@@ -94,7 +94,7 @@ func TestRunTimeoutKillsProcessGroup(t *testing.T) {
 	steps := []ci.Step{{
 		Name:    "test",
 		Cmds:    sh("sleep 300 & echo $! > pid; sleep 300"),
-		Timeout: 200 * time.Millisecond,
+		Timeout: 1500 * time.Millisecond,
 	}}
 	start := time.Now()
 	rs := Run(context.Background(), dir, steps, &bytes.Buffer{})
@@ -114,6 +114,36 @@ func TestRunTimeoutKillsProcessGroup(t *testing.T) {
 	}
 	if !pidGone(pid) {
 		t.Errorf("background sleep %d still alive", pid)
+	}
+	if got := ExitCode(rs, Interrupted(rs)); got != 2 {
+		t.Errorf("exit = %d", got)
+	}
+}
+
+func TestRunNoCommandsFails(t *testing.T) {
+	rs := Run(context.Background(), t.TempDir(), []ci.Step{{Name: "test"}}, &bytes.Buffer{})
+	if rs[0].Status != "failed" || rs[0].Reason != "no commands" {
+		t.Errorf("%+v", rs[0])
+	}
+	if got := ExitCode(rs, false); got != 1 {
+		t.Errorf("exit = %d", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rs = Run(ctx, t.TempDir(), []ci.Step{{Name: "test", Cmds: sh("true")}}, &bytes.Buffer{})
+	if rs[0].Status != "failed" || rs[0].Reason != "cancelled" {
+		t.Errorf("pre-cancelled: %+v", rs[0])
+	}
+}
+
+func TestRunAfterTimeout(t *testing.T) {
+	steps := []ci.Step{{
+		Name: "test", Cmds: sh("true"), Timeout: 200 * time.Millisecond,
+		After: func(ctx context.Context, _ string) error { <-ctx.Done(); return ctx.Err() },
+	}}
+	rs := Run(context.Background(), t.TempDir(), steps, &bytes.Buffer{})
+	if rs[0].Status != "failed" || rs[0].Reason != "timeout" {
+		t.Fatalf("%+v", rs[0])
 	}
 	if got := ExitCode(rs, Interrupted(rs)); got != 2 {
 		t.Errorf("exit = %d", got)
@@ -185,7 +215,7 @@ func TestExitCode(t *testing.T) {
 	tests := []struct {
 		name string
 		rs   []StepResult
-		int  bool
+		intr bool
 		want int
 	}{
 		{"all pass", []StepResult{p, p}, false, 0},
@@ -197,7 +227,7 @@ func TestExitCode(t *testing.T) {
 		{"interrupted pass", []StepResult{p}, true, 2},
 	}
 	for _, tc := range tests {
-		if got := ExitCode(tc.rs, tc.int); got != tc.want {
+		if got := ExitCode(tc.rs, tc.intr); got != tc.want {
 			t.Errorf("%s: got %d want %d", tc.name, got, tc.want)
 		}
 	}
