@@ -139,14 +139,15 @@ rm -rf "$work/test/fixtures"
 mkdir -p "$work/test/fixtures/go-pass"
 cp "$root"/testdata/ci/go/pass/* "$work/test/fixtures/go-pass/"
 
-first=${files# }
-first=${first%% *}
+# The example pins scan.yml: it has no required inputs, so it works as pasted.
+example=scan.yml
+[ -f "$rendered/$example" ] || die 2 "rendered $example is missing"
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 {
   printf '# shipguard %s template hashes\n\n' "$version"
   printf 'Pin a template included by URL with its hash:\n\n'
   printf '```yaml\ninclude:\n  - remote: https://%s/-/raw/%s/templates/%s\n    integrity: %s\n```\n\n' \
-    "$repo" "$version" "$first" "$(hash_of "$rendered/$first")"
+    "$repo" "$version" "$example" "$(hash_of "$rendered/$example")"
   printf 'SHA-256 of each file in `templates/` at tag `%s`:\n\n```text\n' "$version"
   for name in $files; do
     printf 'templates/%s %s\n' "$name" "$(hash_of "$rendered/$name")"

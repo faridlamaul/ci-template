@@ -19,6 +19,9 @@
 # `shipguard ci` writes test-results/junit.xml at the clone root, so the Tests
 # tab fills without extra steps. Slim images need curl and ca-certificates.
 #
+# The image selects the toolchain: the version files of the repository
+# (.nvmrc, go.mod, ...) are compared with it and a mismatch prints a warning.
+#
 # Optional variables (set with export before the shared script line):
 #   SHIPGUARD_DIR       project directory, default .
 #   SHIPGUARD_CONFIG    config file, default .shipguard.yaml
@@ -29,7 +32,7 @@ pipelines:
         name: shipguard go
         image: golang:1.27
         script:
-          - export SHIPGUARD_LANGUAGE=golang SHIPGUARD_TOOLCHAIN=1.27
+          - export SHIPGUARD_LANGUAGE=golang
           - &shipguard-ci |
             set -eu
             SHIPGUARD_RELEASE="__SHIPGUARD_VERSION__"
@@ -59,32 +62,32 @@ pipelines:
             # shellcheck disable=SC2086
             "$tmp/shipguard" ci -- $SHIPGUARD_CI_STEPS || rc=$?
             cat "${SHIPGUARD_DIR}/.shipguard/ci/summary.md" 2> /dev/null || true
-            exit "$rc"
+            [ "$rc" -eq 0 ] || exit "$rc"
 
     # - step:
     #     name: shipguard node
     #     image: node:22
     #     script:
-    #       - export SHIPGUARD_LANGUAGE=node SHIPGUARD_TOOLCHAIN=22
+    #       - export SHIPGUARD_LANGUAGE=node
     #       - *shipguard-ci
     #
     # - step:
     #     name: shipguard python
     #     image: python:3.13
     #     script:
-    #       - export SHIPGUARD_LANGUAGE=python SHIPGUARD_TOOLCHAIN=3.13
+    #       - export SHIPGUARD_LANGUAGE=python
     #       - *shipguard-ci
     #
     # - step:
     #     name: shipguard ruby
     #     image: ruby:3.4
     #     script:
-    #       - export SHIPGUARD_LANGUAGE=ruby SHIPGUARD_TOOLCHAIN=3.4
+    #       - export SHIPGUARD_LANGUAGE=ruby
     #       - *shipguard-ci
     #
     # - step:
     #     name: shipguard rust
     #     image: rust:1.90
     #     script:
-    #       - export SHIPGUARD_LANGUAGE=rust SHIPGUARD_TOOLCHAIN=1.90
+    #       - export SHIPGUARD_LANGUAGE=rust
     #       - *shipguard-ci

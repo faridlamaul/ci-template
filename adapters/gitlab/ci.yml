@@ -6,7 +6,7 @@ spec:
       description: "Language image to run in (the official Docker image name)."
     version:
       type: string
-      description: "Image tag, which is also the toolchain version, for example 1.26 or 22."
+      description: "Image tag, which selects the toolchain, for example 1.26 or 22. The repository's version files are compared with it and a mismatch warns."
     registry:
       type: string
       default: ""
@@ -57,9 +57,6 @@ shipguard-ci:
     SHIPGUARD_LANGUAGE:
       value: "$[[ inputs.language ]]"
       expand: false
-    SHIPGUARD_TOOLCHAIN:
-      value: "$[[ inputs.version ]]"
-      expand: false
     SHIPGUARD_CI_STEPS:
       value: "$[[ inputs.steps ]]"
       expand: false
@@ -91,7 +88,7 @@ shipguard-ci:
       "$tmp/shipguard" ci -- $SHIPGUARD_CI_STEPS || rc=$?
       # The coverage regex reads the job log, so print the summary on failure too.
       cat "${SHIPGUARD_DIR}/.shipguard/ci/summary.md" 2> /dev/null || true
-      exit "$rc"
+      [ "$rc" -eq 0 ] || exit "$rc"
   artifacts:
     when: always
     expire_in: 30 days

@@ -79,6 +79,13 @@ if cmp -s "$check/templates/ci.yml" "$work/dist-1.2.3/ci.yml"; then pass "templa
 hash=$(awk '$1 ~ /\/scan\.yml$/ {print $2}' "$work/integrity-1.2.3.txt")
 if grep -qx "templates/scan.yml $hash" "$check/INTEGRITY.md"; then pass "INTEGRITY.md has the hash line"; else fail "INTEGRITY.md: $(cat "$check/INTEGRITY.md" 2> /dev/null)"; fi
 if grep -qF 'integrity: sha256-' "$check/INTEGRITY.md"; then pass "INTEGRITY.md has the usage note"; else fail "INTEGRITY.md usage note"; fi
+# The usage example pins scan.yml (no required inputs), not the first file
+# alphabetically (ci.yml needs inputs and would not work as a copy-paste).
+if grep -A1 -E '^  - remote: https://.*/-/raw/1\.2\.3/templates/scan\.yml$' "$check/INTEGRITY.md" | grep -qx "    integrity: $hash"; then
+  pass "INTEGRITY.md example pins scan.yml with its hash"
+else
+  fail "INTEGRITY.md example: $(sed -n '/^include:/,/integrity:/p' "$check/INTEGRITY.md")"
+fi
 no_token "$work/out1"
 no_token "$check/.git/config" "$work/main.git/config"
 
@@ -191,6 +198,24 @@ rm "$rr/adapters/gitlab/ci.yml"
 render_rc "render without binary placeholders needs no hashes" 0 -u SHIPGUARD_BIN_SHA256_AMD64 -u SHIPGUARD_BIN_SHA256_ARM64
 printf 'x: __SHIPGUARD_VERSION__ __SHIPGUARD_BIN_SHA256_MIPS__\n' > "$rr/adapters/gitlab/ci.yml"
 render_rc "render with an unknown placeholder" 1 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$h2"
+
+# ---- shared ci job script (GitLab template and Bitbucket snippet) ----
+gl_ci=$root/adapters/gitlab/ci.yml
+bb_ci=$root/examples/bitbucket/build-test-pipelines.yml
+# The image tag must not become SHIPGUARD_TOOLCHAIN: it would replace the
+# detected version and hide a mismatch between the repo and the image.
+for f in "$gl_ci" "$bb_ci"; do
+  if grep -q 'SHIPGUARD_TOOLCHAIN' "$f"; then fail "$(basename "$f") sets SHIPGUARD_TOOLCHAIN"; else pass "$(basename "$f") leaves SHIPGUARD_TOOLCHAIN unset"; fi
+  if grep -q 'SHIPGUARD_LANGUAGE' "$f"; then pass "$(basename "$f") sets SHIPGUARD_LANGUAGE"; else fail "$(basename "$f") lacks SHIPGUARD_LANGUAGE"; fi
+  # Under set -eu a bare `exit "$rc"` ends Bitbucket's shared shell even on
+  # success, skipping the user's script lines after the anchor.
+  if grep -qE '^[[:space:]]*exit "\$rc"[[:space:]]*$' "$f"; then fail "$(basename "$f") ends with a bare exit"; else pass "$(basename "$f") has no bare exit"; fi
+  if grep -qF '[ "$rc" -eq 0 ] || exit "$rc"' "$f"; then pass "$(basename "$f") exits only on failure"; else fail "$(basename "$f") lacks the conditional exit"; fi
+done
+# tail_of FILE: the run-and-report lines, without indentation and comments.
+tail_of() { awk '/^[[:space:]]*rc=0$/ { on = 1 } on { sub(/^[[:space:]]+/, ""); if ($0 !~ /^#/) print } /exit "\$rc"/ { on = 0 }' "$1"; }
+if [ -n "$(tail_of "$gl_ci")" ] && [ "$(tail_of "$gl_ci")" = "$(tail_of "$bb_ci")" ]; then pass "GitLab and Bitbucket job tails match"
+else fail "job tails differ: $(tail_of "$gl_ci") // $(tail_of "$bb_ci")"; fi
 
 if [ "$fails" -ne 0 ]; then
   echo "publish-gitlab-test: $fails failure(s)" >&2
