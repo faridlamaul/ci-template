@@ -1,0 +1,70 @@
+[
+  {
+    "Name": "install",
+    "Cmds": [
+      {
+        "Argv": [
+          "bundle",
+          "config",
+          "set",
+          "--local",
+          "frozen",
+          "true"
+        ],
+        "Shell": "",
+        "Env": null
+      },
+      {
+        "Argv": [
+          "bundle",
+          "install"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "lint",
+    "Cmds": null,
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "rubocop not in Gemfile.lock",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "test",
+    "Cmds": [
+      {
+        "Argv": [
+          "bundle",
+          "exec",
+          "rake",
+          "test"
+        ],
+        "Shell": "",
+        "Env": null
+      }
+    ],
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  },
+  {
+    "Name": "build",
+    "Cmds": null,
+    "JUnit": null,
+    "Coverage": "",
+    "Skip": "no gemspec",
+    "Timeout": 1800000000000,
+    "HasAfter": false
+  }
+]
