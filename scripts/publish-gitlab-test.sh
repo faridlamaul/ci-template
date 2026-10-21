@@ -82,6 +82,13 @@ if grep -qF 'integrity: sha256-' "$check/INTEGRITY.md"; then pass "INTEGRITY.md 
 no_token "$work/out1"
 no_token "$check/.git/config" "$work/main.git/config"
 
+# The Bitbucket example is rendered next to the GitLab set, never into it.
+bb=$work/bitbucket/build-test-pipelines.yml
+if [ -f "$bb" ] && grep -q "$SHIPGUARD_BIN_SHA256_AMD64" "$bb" && grep -q "$SHIPGUARD_BIN_SHA256_ARM64" "$bb"; then pass "bitbucket example has both hashes"; else fail "bitbucket example hashes"; fi
+if grep -q '__SHIPGUARD_' "$bb"; then fail "bitbucket example placeholder left"; else pass "bitbucket example has no placeholder"; fi
+if grep -q 'v1.2.3' "$bb"; then pass "bitbucket example has the version"; else fail "bitbucket example version"; fi
+if [ ! -e "$work/dist-1.2.3/build-test-pipelines.yml" ] && [ ! -e "$check/templates/build-test-pipelines.yml" ]; then pass "bitbucket example not in the GitLab set"; else fail "bitbucket example leaked into the GitLab set"; fi
+
 # 2. Publishing the same version again is refused: a published tag never moves.
 if publish main 1.2.3 "$work/out2"; then fail "re-publish 1.2.3 succeeded"; else
   rc=$?

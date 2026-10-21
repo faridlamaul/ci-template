@@ -307,6 +307,35 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Attaches the rendered Bitbucket snippet to the GitHub release. It has its
+  # own job so the gitlab job keeps a read-only token. Prereleases get it too.
+  bitbucket-snippet:
+    name: Bitbucket snippet
+    needs: [release, binaries]
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.version }}
+          persist-credentials: false
+
+      - name: Render the snippet
+        env:
+          TAG: ${{ needs.release.outputs.version }}
+          SHIPGUARD_BIN_SHA256_AMD64: ${{ needs.binaries.outputs.sha256_amd64 }}
+          SHIPGUARD_BIN_SHA256_ARM64: ${{ needs.binaries.outputs.sha256_arm64 }}
+        run: ./scripts/render-gitlab.sh "${TAG#v}" dist/gitlab dist/bitbucket > /dev/null
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release.outputs.version }}
+        run: gh release upload "$TAG" dist/bitbucket/build-test-pipelines.yml --clobber --repo "$GITHUB_REPOSITORY"
+
   # Users reference the action as faridlamaul/shipguard@vX, so the major tag
   # follows the newest stable release once its artifacts are published.
   # shiptag ignores tags like v1 because they are not full semantic versions.

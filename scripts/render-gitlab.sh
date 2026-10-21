@@ -5,18 +5,25 @@
 # when any template does, SHIPGUARD_BIN_SHA256_AMD64 and SHIPGUARD_BIN_SHA256_ARM64
 # (64 lowercase hex) must be set, else exit 2.
 #
-# Usage: scripts/render-gitlab.sh VERSION [OUT_DIR]   (VERSION is X.Y.Z, no "v")
-# Prints "<file> sha256-<base64>" for each rendered file: the value for the
-# `integrity:` key of `include: remote`.
+# It also renders examples/bitbucket/build-test-pipelines.yml (when present)
+# with the same placeholders into BITBUCKET_OUT_DIR, default <OUT_DIR>/../bitbucket.
+# That file is a release asset, not a GitLab template: it is never written to
+# OUT_DIR and its hash is not printed.
+#
+# Usage: scripts/render-gitlab.sh VERSION [OUT_DIR [BITBUCKET_OUT_DIR]]   (VERSION is X.Y.Z, no "v")
+# Prints "<file> sha256-<base64>" for each rendered GitLab file: the value for
+# the `integrity:` key of `include: remote`.
 set -eu
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  echo "usage: $0 VERSION [OUT_DIR]" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
+  echo "usage: $0 VERSION [OUT_DIR [BITBUCKET_OUT_DIR]]" >&2
   exit 2
 fi
 version=$1
 root=$(cd "$(dirname "$0")/.." && pwd)
 out=${2:-$root/dist/gitlab}
+bb_src=$root/examples/bitbucket/build-test-pipelines.yml
+bb_out=${3:-$(dirname "$out")/bitbucket}
 
 case $version in
   *[!0-9.]*|''|.*|*.|*..*) bad=1 ;;
@@ -36,6 +43,9 @@ for src in "$root"/adapters/gitlab/*.yml; do
     need_hash=1
   fi
 done
+if [ -f "$bb_src" ] && grep -q '__SHIPGUARD_BIN_SHA256_' "$bb_src"; then
+  need_hash=1
+fi
 amd64=${SHIPGUARD_BIN_SHA256_AMD64:-}
 arm64=${SHIPGUARD_BIN_SHA256_ARM64:-}
 if [ "$need_hash" = 1 ]; then
@@ -59,6 +69,11 @@ for src in "$root"/adapters/gitlab/*.yml; do
   fi
 done
 
+if [ -f "$bb_src" ] && ! grep -q '__SHIPGUARD_VERSION__' "$bb_src"; then
+  echo "render-gitlab: placeholder missing in $bb_src" >&2
+  exit 1
+fi
+
 mkdir -p "$out"
 rendered=
 for src in "$root"/adapters/gitlab/*.yml; do
@@ -76,6 +91,18 @@ done
 if [ -z "$rendered" ]; then
   echo "render-gitlab: no templates found in adapters/gitlab" >&2
   exit 1
+fi
+
+if [ -f "$bb_src" ]; then
+  mkdir -p "$bb_out"
+  dst=$bb_out/$(basename "$bb_src")
+  sed -e "s/__SHIPGUARD_VERSION__/v$version/g" \
+    -e "s/__SHIPGUARD_BIN_SHA256_AMD64__/$amd64/g" \
+    -e "s/__SHIPGUARD_BIN_SHA256_ARM64__/$arm64/g" "$bb_src" > "$dst"
+  if grep -Eq '__SHIPGUARD_(VERSION|BIN_SHA256_[A-Z0-9]+)__' "$dst"; then
+    echo "render-gitlab: placeholder left in $dst" >&2
+    exit 1
+  fi
 fi
 
 for dst in $rendered; do
