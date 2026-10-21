@@ -115,7 +115,7 @@ jobs:
       - name: Run shipguard ci on the fixtures
         env:
           CI_E2E_LANG: ${{ matrix.lang }}
-        run: make ci-e2e LANG="$CI_E2E_LANG"
+        run: make ci-e2e CI_LANG="$CI_E2E_LANG"
 
   zizmor:
     name: zizmor

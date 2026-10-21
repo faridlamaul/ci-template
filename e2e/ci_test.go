@@ -27,6 +27,26 @@ var ciImages = map[string]string{
 	"rust":   "rust:1",
 }
 
+// ciLintFinding is text the linter prints for the fail-lint fixture of each
+// language, so a lint step that dies for another reason does not pass the case.
+var ciLintFinding = map[string]string{
+	"go":     "unused",
+	"node":   "remove the marker comment",
+	"python": "F401",
+	"ruby":   "Lint/UselessAssignment",
+	"rust":   "needless_return",
+}
+
+// ciBuild is the expected build outcome per language: "passed", or the exact
+// skip reason (the fixtures have no build script, gemspec or build-system).
+var ciBuild = map[string]string{
+	"go":     "passed",
+	"node":   "no build script in package.json",
+	"python": "no [build-system] in pyproject.toml",
+	"ruby":   "no gemspec",
+	"rust":   "passed",
+}
+
 type ciCase struct {
 	lang, name string // fixture dir: testdata/ci/<lang>/<name>
 	kind       string // pass | fail-lint | fail-test
@@ -140,6 +160,15 @@ func TestCIFixtures(t *testing.T) {
 	if os.Getenv("SHIPGUARD_CI_E2E") == "" {
 		t.Skip("SHIPGUARD_CI_E2E is not set (run make ci-e2e)")
 	}
+	selected := 0
+	for _, c := range ciCases {
+		if ciSelected(c.lang) {
+			selected++
+		}
+	}
+	if selected == 0 {
+		t.Fatalf("SHIPGUARD_CI_E2E_LANG=%q matches no language", os.Getenv("SHIPGUARD_CI_E2E_LANG"))
+	}
 	bin := buildLinuxBinary(t)
 	// Serial on purpose: the cases download toolchain components and tools.
 	for _, c := range ciCases {
@@ -210,6 +239,22 @@ func runCICase(t *testing.T, bin string, c ciCase) {
 	if got := res.step(t, "test").Status; got != test {
 		t.Errorf("test = %s, want %s", got, test)
 	}
+	if c.kind == "fail-lint" {
+		if ls := res.step(t, "lint"); ls.ExitCode <= 0 {
+			t.Errorf("lint exit_code = %d, want the linter's finding code (> 0)", ls.ExitCode)
+		}
+		if want := ciLintFinding[c.lang]; !strings.Contains(out, want) {
+			t.Errorf("output does not show the lint finding %q", want)
+		}
+	}
+	b := res.step(t, "build")
+	if want := ciBuild[c.lang]; want == "passed" {
+		if b.Status != "passed" {
+			t.Errorf("build = %s (%s), want passed", b.Status, b.Reason)
+		}
+	} else if b.Status != "skipped" || b.Reason != want {
+		t.Errorf("build = %s (%q), want skipped (%q)", b.Status, b.Reason, want)
+	}
 	for _, s := range res.Steps {
 		if !slices.Contains([]string{"passed", "failed", "skipped"}, s.Status) {
 			t.Errorf("step %s: unexpected status %q", s.Name, s.Status)
@@ -233,7 +278,8 @@ func runCICase(t *testing.T, bin string, c ciCase) {
 		t.Errorf("junit.xml has %d failures, want 0", failures)
 	}
 
-	// Go converts the cover profile only after a passing test step.
+	// Go and Python write coverage.xml only after the test commands succeed, so
+	// the fail-test cases have none.
 	if (c.lang == "go" || c.lang == "python") && c.kind != "fail-test" {
 		f, err := os.Open(filepath.Join(dir, ".shipguard", "ci", "coverage.xml"))
 		if err != nil {

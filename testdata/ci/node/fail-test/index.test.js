@@ -1,11 +1,10 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+// A bare top-level test, outside describe(), must count as a failure too.
+const test = require('node:test');
 const assert = require('node:assert');
 const { add } = require('./index.js');
 
-describe('add', () => {
-  it('adds two numbers', () => {
-    assert.strictEqual(add(2, 2), 5);
-  });
+test('adds two numbers', () => {
+  assert.strictEqual(add(2, 2), 5);
 });
