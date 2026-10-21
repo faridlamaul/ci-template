@@ -3,8 +3,10 @@ package finding
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Severity ranks a finding; higher is more severe.
@@ -96,6 +98,24 @@ type Finding struct {
 	Status       Status   `json:"status,omitempty"`
 }
 
+// UnmarshalJSON decodes a Finding and rejects one without a severity, which
+// would otherwise decode as info and could slip past the gate.
+func (f *Finding) UnmarshalJSON(b []byte) error {
+	type plain Finding
+	aux := struct {
+		*plain
+		Severity *Severity `json:"severity"`
+	}{plain: (*plain)(f)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if aux.Severity == nil {
+		return fmt.Errorf("finding %q: missing severity", f.ID)
+	}
+	f.Severity = *aux.Severity
+	return nil
+}
+
 // ScannerRun records the outcome of one scanner (Status: ok|error|skipped).
 type ScannerRun struct {
 	Name       string   `json:"name"`
@@ -117,6 +137,19 @@ type Result struct {
 	PolicyDefaults   bool            `json:"policy_defaults,omitempty"` // no config file: built-in defaults
 }
 
+// MarshalJSON encodes nil Scanners and Findings as empty arrays, as the
+// findings schema requires.
+func (r Result) MarshalJSON() ([]byte, error) {
+	type plain Result
+	if r.Scanners == nil {
+		r.Scanners = []ScannerRun{}
+	}
+	if r.Findings == nil {
+		r.Findings = []Finding{}
+	}
+	return json.Marshal(plain(r))
+}
+
 // ReadResult loads a Result from a JSON file.
 func ReadResult(path string) (Result, error) {
 	var r Result
@@ -130,13 +163,36 @@ func ReadResult(path string) (Result, error) {
 	return r, nil
 }
 
-// WriteResult writes a Result as indented JSON.
-func WriteResult(path string, r Result) error {
+// WriteResult writes a Result as indented JSON, creating the parent
+// directory. It writes a temp file in the same directory and renames it into
+// place, so readers never see a partial file.
+func WriteResult(path string, r Result) (err error) {
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode result: %w", err)
 	}
-	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("write result: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".findings-*.tmp")
+	if err != nil {
+		return fmt.Errorf("write result: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(tmp.Name())
+		}
+	}()
+	_, werr := tmp.Write(append(b, '\n'))
+	cerr := tmp.Close()
+	if err := errors.Join(werr, cerr); err != nil {
+		return fmt.Errorf("write result: %w", err)
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return fmt.Errorf("write result: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("write result: %w", err)
 	}
 	return nil
