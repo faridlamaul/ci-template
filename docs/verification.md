@@ -11,6 +11,7 @@ Results of the questions that had to be answered on the real platforms before th
 | V5 | done: opengrep 1.31.0 ships musllinux x86_64 and aarch64; the image is multi-arch on Alpine |
 | V6 | done: see below |
 | V7 | done: see below |
+| B1 | done: see below |
 
 ## V1: can a Bitbucket pipe use a GHCR image, pinned by tag and by digest?
 
@@ -108,3 +109,35 @@ Results of the questions that had to be answered on the real platforms before th
 - When `job.workflow_ref` ends in `@refs/tags/vX.Y.Z`, `scan.yml` uses the published image `ghcr.io/faridlamaul/shipguard:vX.Y.Z`.
 - Callers do not need `id-token: write`. The OIDC fallback is not needed.
 - `github.workflow_*` refers to the caller and must not be used for this purpose.
+
+## B1: do the official language images ship curl, tar and sha256sum?
+
+**Question.** The build-test snippets download and unpack toolchains and checksum them. Which tools are present in the official `golang`, `node`, `python`, `ruby` and `rust` images, and in their `-slim` variants? Is `wget` present?
+
+**Method.** On 2026-10-21 each image was pulled from Docker Hub and probed with `docker run --rm <image> sh -c 'command -v curl; command -v tar; command -v sha256sum; command -v wget'`. The tags are the current stable ones: `golang:1.27`, `node:24`, `python:3.13`, `ruby:3.4`, `rust:1`, and the `-slim` tag of each. The images ran on the host's default platform (Apple Silicon, so linux/arm64). amd64 was not tested. For the slim fallback, `apt-get update && apt-get install -y --no-install-recommends curl ca-certificates` was run in each slim image, then the tools were probed again and an HTTPS request to `https://github.com` was made.
+
+**Evidence.**
+
+| Image | OS | curl | tar | sha256sum | wget |
+|---|---|---|---|---|---|
+| `golang:1.27` | Debian 13 (trixie) | yes | yes | yes | yes |
+| `golang` `-slim` | n/a | no such tag on Docker Hub (only `-alpine`, `-bookworm`, `-trixie`) | | | |
+| `node:24` | Debian 12 (bookworm) | yes | yes | yes | yes |
+| `node:24-slim` | Debian 12 (bookworm) | no | yes | yes | no |
+| `python:3.13` | Debian 13 (trixie) | yes | yes | yes | yes |
+| `python:3.13-slim` | Debian 13 (trixie) | no | yes | yes | no |
+| `ruby:3.4` | Debian 13 (trixie) | yes | yes | yes | yes |
+| `ruby:3.4-slim` | Debian 13 (trixie) | no | yes | yes | no |
+| `rust:1` | Debian 13 (trixie) | yes | yes | yes | yes |
+| `rust:1-slim` | Debian 13 (trixie) | no | yes | yes | no |
+
+After `apt-get install curl ca-certificates` the four slim images (`node`, `python`, `ruby`, `rust`) had `curl`, and the HTTPS request succeeded.
+
+**Result.** The full Debian images have all four tools. The `-slim` images have `tar` and `sha256sum` but neither `curl` nor `wget`. `golang` has no `-slim` tag, so it is not a gap. `wget` is not present in any slim image, so it cannot be the fallback.
+
+**Chosen path.**
+- Full images: use `curl` directly. No install step is needed.
+- Slim images: run `apt-get update && apt-get install -y --no-install-recommends curl ca-certificates` first, then use `curl`.
+- `golang` has no slim variant. Use `golang:1.27` (Debian trixie, full).
+
+
