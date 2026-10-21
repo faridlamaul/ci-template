@@ -74,6 +74,7 @@ func TestParseRejectsBad(t *testing.T) {
 type entry struct {
 	name, body string
 	link       string
+	hard       bool
 }
 
 func tgz(t *testing.T, es ...entry) []byte {
@@ -85,6 +86,9 @@ func tgz(t *testing.T, es ...entry) []byte {
 		h := &tar.Header{Name: e.name, Mode: 0o644, Size: int64(len(e.body))}
 		if e.link != "" {
 			h.Typeflag, h.Linkname, h.Size = tar.TypeSymlink, e.link, 0
+			if e.hard {
+				h.Typeflag = tar.TypeLink
+			}
 		}
 		if err := tw.WriteHeader(h); err != nil {
 			t.Fatal(err)
@@ -228,22 +232,43 @@ func TestEnsureRetries(t *testing.T) {
 }
 
 func TestEnsureArchivePathTraversal(t *testing.T) {
-	for name, es := range map[string][]entry{
-		"dotdot":  {{name: "../x", body: "x"}},
-		"abs":     {{name: "/etc/x", body: "x"}},
-		"symlink": {{name: "demo-1.2.3/l", link: "../../outside"}, {name: "demo-1.2.3/demo", body: "x"}},
+	good := entry{name: "demo-1.2.3/demo", body: "x"}
+	for name, tc := range map[string]struct {
+		es   []entry
+		want string
+	}{
+		"dotdot":   {[]entry{{name: "../x", body: "x"}, good}, "unsafe path"},
+		"abs":      {[]entry{{name: "/etc/x", body: "x"}, good}, "unsafe path"},
+		"symlink":  {[]entry{{name: "demo-1.2.3/l", link: "../../outside"}, good}, "points outside"},
+		"abslink":  {[]entry{{name: "demo-1.2.3/l", link: "/etc/passwd"}, good}, "points outside"},
+		"hardlink": {[]entry{{name: "demo-1.2.3/h", link: "../../outside", hard: true}, good}, "points outside"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, tool, _ := setup(t, tgz(t, es...), nil)
-			if _, err := c.Ensure(context.Background(), tool); err == nil {
-				t.Fatal("want error")
+			c, tool, _ := setup(t, tgz(t, tc.es...), nil)
+			_, err := c.Ensure(context.Background(), tool)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want containing %q", err, tc.want)
 			}
 			assertEmpty(t, c.Dir)
-			if _, err := os.Stat(filepath.Join(filepath.Dir(c.Dir), "x")); err == nil {
-				t.Error("escaped file written")
-			}
 		})
 	}
+}
+
+func TestEnsureZipPathTraversal(t *testing.T) {
+	var zb bytes.Buffer
+	zw := zip.NewWriter(&zb)
+	for _, n := range []string{"../x", "demo-1.2.3/demo"} {
+		w, _ := zw.Create(n)
+		w.Write([]byte("x"))
+	}
+	zw.Close()
+	c, tool, _ := setup(t, zb.Bytes(), nil)
+	tool.Archive = "zip"
+	_, err := c.Ensure(context.Background(), tool)
+	if err == nil || !strings.Contains(err.Error(), "unsafe path") {
+		t.Fatalf("err = %v", err)
+	}
+	assertEmpty(t, c.Dir)
 }
 
 func TestEnsureIgnoresStaleOK(t *testing.T) {
