@@ -98,6 +98,8 @@ func TestCIExitCodes(t *testing.T) {
 		{"pass", &fakeLang{steps: all("true")}, 0, ""},
 		{"step fails", &fakeLang{steps: all("exit 3")}, 1, ""},
 		{"all skipped", &fakeLang{steps: map[ci.StepName]string{}}, 2, ""},
+		{"only install ran", &fakeLang{steps: map[ci.StepName]string{"install": "true"}}, 2, ""},
+		{"install fails", &fakeLang{steps: map[ci.StepName]string{"install": "exit 4", "test": "true"}}, 1, ""},
 		{"steps error", &fakeLang{stepsErr: errors.New("tool boom")}, 2, "error: tool boom"},
 	}
 	for _, tt := range tests {
@@ -128,6 +130,12 @@ func TestCIExitCodes(t *testing.T) {
 		}
 		if code, _, _ := runCI(dir, nil); code != 2 {
 			t.Fatalf("exit = %d, want 2", code)
+		}
+	})
+	t.Run("install alone", func(t *testing.T) {
+		dir := setupCI(t, &fakeLang{steps: all("true")}, nil)
+		if code, _, stderr := runCI(dir, nil, "install"); code != 0 {
+			t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr)
 		}
 	})
 	t.Run("unknown step", func(t *testing.T) {
@@ -163,6 +171,24 @@ func TestToolchainMismatch(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(dir, ".shipguard", "ci", "result.json"))
 		if !strings.Contains(string(b), "requested but 1.22.3 is installed") {
 			t.Fatalf("result.json lacks warning: %s", b)
+		}
+	})
+	// The GitLab template and Bitbucket snippet set only SHIPGUARD_LANGUAGE:
+	// the repo's version file (22) is compared with the image's toolchain (20).
+	t.Run("language env only", func(t *testing.T) {
+		dir := setupCI(t, &fakeLang{steps: steps, version: "22", installed: "20.19.1"}, nil)
+		_, _, stderr := runCI(dir, map[string]string{"SHIPGUARD_LANGUAGE": "fake"})
+		if !strings.Contains(stderr, "warning: fake 22 requested but 20.19.1 is installed") {
+			t.Fatalf("stderr = %q", stderr)
+		}
+	})
+	// SHIPGUARD_TOOLCHAIN replaces the detected version, so exporting the image
+	// tag there would hide the mismatch; the templates must not set it.
+	t.Run("toolchain env masks the repo version", func(t *testing.T) {
+		dir := setupCI(t, &fakeLang{steps: steps, version: "22", installed: "20.19.1"}, nil)
+		_, _, stderr := runCI(dir, map[string]string{"SHIPGUARD_LANGUAGE": "fake", "SHIPGUARD_TOOLCHAIN": "20"})
+		if strings.Contains(stderr, "warning:") {
+			t.Fatalf("stderr = %q", stderr)
 		}
 	})
 	t.Run("same major.minor or range", func(t *testing.T) {
@@ -306,5 +332,43 @@ func TestCIGitHubAnnotations(t *testing.T) {
 	code, out, stderr := runCI(dir, map[string]string{"GITHUB_ACTIONS": "true"})
 	if code != 1 || !strings.Contains(out, "::error") || !strings.Contains(out, "TestBad") {
 		t.Fatalf("exit = %d, out = %q, stderr = %q", code, out, stderr)
+	}
+}
+
+// stepToolLang fetches one pinned tool per enabled step, like the Go, Rust and
+// Python languages do.
+type stepToolLang struct{ *fakeLang }
+
+func (l *stepToolLang) Steps(ctx context.Context, env ci.Env, d ci.Detection, cfg policy.CIConfig) ([]ci.Step, error) {
+	for name, sc := range map[string]policy.CIStep{"lint": cfg.Steps.Lint, "test": cfg.Steps.Test, "build": cfg.Steps.Build} {
+		if sc.On() {
+			if _, err := env.Tools(ctx, name+"-tool"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return l.fakeLang.Steps(ctx, env, d, cfg)
+}
+
+func TestCIFetchesToolsOnlyForSelectedSteps(t *testing.T) {
+	l := &fakeLang{steps: map[ci.StepName]string{"install": "true", "lint": "true", "test": "true", "build": "true"}}
+	dir := setupCI(t, l, map[string]string{".shipguard.yaml": "ci:\n  steps:\n    build:\n      enabled: true\n"})
+	ciLanguages = func() []ci.Language { return []ci.Language{&stepToolLang{fakeLang: l}} }
+	var fetched []string
+	ciToolResolver = func(string) (func(context.Context, string) (string, error), map[string]string, error) {
+		return func(_ context.Context, n string) (string, error) {
+			fetched = append(fetched, n)
+			return "/tools/" + n, nil
+		}, map[string]string{}, nil
+	}
+	if code, _, stderr := runCI(dir, nil, "build"); code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+	if strings.Join(fetched, ",") != "build-tool" {
+		t.Fatalf("fetched = %v, want only build-tool", fetched)
+	}
+	// The config the language sees keeps the selected step's own settings.
+	if !l.gotCfg.Steps.Build.On() || l.gotCfg.Steps.Lint.On() || l.gotCfg.Steps.Test.On() {
+		t.Fatalf("cfg steps = %+v", l.gotCfg.Steps)
 	}
 }

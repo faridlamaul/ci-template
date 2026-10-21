@@ -176,6 +176,21 @@ func selectSteps(args []string) ([]ci.StepName, error) {
 	return out, nil
 }
 
+// onlySelected returns a copy of cfg with the steps not named on the command
+// line disabled, so languages fetch pinned tools only for the selected steps.
+func onlySelected(cfg policy.CIConfig, names []ci.StepName) policy.CIConfig {
+	off := false
+	for _, s := range []struct {
+		name ci.StepName
+		step *policy.CIStep
+	}{{"lint", &cfg.Steps.Lint}, {"test", &cfg.Steps.Test}, {"build", &cfg.Steps.Build}} {
+		if !slices.Contains(names, s.name) {
+			s.step.Enabled = &off
+		}
+	}
+	return cfg
+}
+
 func doCI(ctx context.Context, g *globals, in *ciInputs, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	names, err := selectSteps(args)
 	if err != nil {
@@ -213,7 +228,7 @@ func doCI(ctx context.Context, g *globals, in *ciInputs, args []string, getenv f
 		warning = fmt.Sprintf("%s %s requested but %s is installed", det.Language, det.Version, installed)
 		_, _ = fmt.Fprintf(stderr, "warning: %s\n", warning)
 	}
-	all, err := l.Steps(ctx, ci.Env{Dir: g.dir, Tools: toolFn, Defaults: defaults}, det, cfg)
+	all, err := l.Steps(ctx, ci.Env{Dir: g.dir, Tools: toolFn, Defaults: defaults}, det, onlySelected(cfg, names))
 	if err != nil {
 		return fail(err)
 	}
