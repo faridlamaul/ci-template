@@ -17,7 +17,7 @@ import (
 
 var update = flag.Bool("update", false, "update golden files")
 
-var defaults = map[string]string{"NODE_DEFAULT": "24"}
+var defaults = map[string]string{"NODE_DEFAULT": "24", "COREPACK_VERSION": "0.36.0"}
 
 func project(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -75,11 +75,11 @@ func TestNodePackageManager(t *testing.T) {
 		errSub string
 	}{
 		{"npm", map[string]string{"package-lock.json": "{}"}, []string{"npm", "ci"}, 1, ""},
-		{"pnpm", map[string]string{"pnpm-lock.yaml": ""}, []string{"pnpm", "install", "--frozen-lockfile"}, 2, ""},
-		{"yarn classic", map[string]string{"yarn.lock": ""}, []string{"yarn", "install", "--frozen-lockfile"}, 2, ""},
-		{"yarn berry yarnrc", map[string]string{"yarn.lock": "", ".yarnrc.yml": "x: y"}, []string{"yarn", "install", "--immutable"}, 2, ""},
-		{"yarn berry pm", map[string]string{"yarn.lock": "", "package.json": `{"packageManager":"yarn@4.1.0"}`}, []string{"yarn", "install", "--immutable"}, 2, ""},
-		{"yarn classic pm", map[string]string{"yarn.lock": "", "package.json": `{"packageManager":"yarn@1.22.19"}`}, []string{"yarn", "install", "--frozen-lockfile"}, 2, ""},
+		{"pnpm", map[string]string{"pnpm-lock.yaml": ""}, []string{"pnpm", "install", "--frozen-lockfile"}, 3, ""},
+		{"yarn classic", map[string]string{"yarn.lock": ""}, []string{"yarn", "install", "--frozen-lockfile"}, 3, ""},
+		{"yarn berry yarnrc", map[string]string{"yarn.lock": "", ".yarnrc.yml": "x: y"}, []string{"yarn", "install", "--immutable"}, 3, ""},
+		{"yarn berry pm", map[string]string{"yarn.lock": "", "package.json": `{"packageManager":"yarn@4.1.0"}`}, []string{"yarn", "install", "--immutable"}, 3, ""},
+		{"yarn classic pm", map[string]string{"yarn.lock": "", "package.json": `{"packageManager":"yarn@1.22.19"}`}, []string{"yarn", "install", "--frozen-lockfile"}, 3, ""},
 		{"bun.lock", map[string]string{"bun.lock": ""}, []string{"/tools/bun", "install", "--frozen-lockfile"}, 1, ""},
 		{"bun.lockb", map[string]string{"bun.lockb": ""}, []string{"/tools/bun", "install", "--frozen-lockfile"}, 1, ""},
 		{"none", map[string]string{}, nil, 0, "lockfile"},
@@ -115,6 +115,40 @@ func TestNodePackageManager(t *testing.T) {
 				t.Fatalf("argv = %v, want %v", got, c.first)
 			}
 		})
+	}
+}
+
+// Node 25 and later ship without corepack: pnpm and yarn installs first
+// install the pinned corepack with npm when the image has none.
+func TestNodeCorepackBootstrap(t *testing.T) {
+	const want = "command -v corepack >/dev/null 2>&1 || npm install -g corepack@0.36.0"
+	for lock, pm := range map[string]string{"pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn"} {
+		dir := project(t, map[string]string{"package.json": pkgAll, lock: ""})
+		steps, err := Node{}.Steps(context.Background(), fakeEnv(dir), ci.Detection{}, policy.CIConfig{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmds := steps[0].Cmds
+		if len(cmds) != 3 || cmds[0].Shell != want || cmds[0].Argv != nil {
+			t.Fatalf("%s: first cmd = %+v, want shell %q", pm, cmds, want)
+		}
+		if got := strings.Join(cmds[1].Argv, " "); got != "corepack enable "+pm {
+			t.Fatalf("%s: second cmd = %q", pm, got)
+		}
+	}
+	for name, v := range map[string]string{"missing": "", "unsafe": "1.0.0; rm -rf /"} {
+		dir := project(t, map[string]string{"package.json": pkgAll, "pnpm-lock.yaml": ""})
+		env := fakeEnv(dir)
+		env.Defaults = map[string]string{"NODE_DEFAULT": "24", "COREPACK_VERSION": v}
+		if _, err := (Node{}).Steps(context.Background(), env, ci.Detection{}, policy.CIConfig{}); err == nil || !strings.Contains(err.Error(), "COREPACK_VERSION") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	// npm and bun need no corepack.
+	dir := project(t, map[string]string{"package.json": pkgAll, "package-lock.json": "{}"})
+	steps, err := Node{}.Steps(context.Background(), fakeEnv(dir), ci.Detection{}, policy.CIConfig{})
+	if err != nil || len(steps[0].Cmds) != 1 {
+		t.Fatalf("npm: %+v, %v", steps, err)
 	}
 }
 

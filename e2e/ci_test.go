@@ -17,11 +17,13 @@ import (
 
 const ciFixturesDir = "../testdata/ci"
 
-// ciImages are the official language images, overridable per language with
-// SHIPGUARD_CI_IMAGE_<LANG> (for example SHIPGUARD_CI_IMAGE_GO=golang:1.27).
+// ciImages are the official language images, overridable per key with
+// SHIPGUARD_CI_IMAGE_<KEY> (for example SHIPGUARD_CI_IMAGE_GO=golang:1.27).
+// node25 is a Node >= 25 image, which ships without corepack.
 var ciImages = map[string]string{
 	"go":     "golang:1.27",
 	"node":   "node:24",
+	"node25": "node:26",
 	"python": "python:3.13",
 	"ruby":   "ruby:3.4",
 	"rust":   "rust:1",
@@ -50,16 +52,31 @@ var ciBuild = map[string]string{
 type ciCase struct {
 	lang, name string // fixture dir: testdata/ci/<lang>/<name>
 	kind       string // pass | fail-lint | fail-test
+	image      string // ciImages key; empty = lang
+	wantOut    string // text the output must contain (proves the package manager ran)
+}
+
+func (c ciCase) imageKey() string {
+	if c.image != "" {
+		return c.image
+	}
+	return c.lang
 }
 
 var ciCases = func() []ciCase {
 	var cs []ciCase
 	for _, l := range []string{"go", "node", "python", "ruby", "rust"} {
 		for _, k := range []string{"pass", "fail-lint", "fail-test"} {
-			cs = append(cs, ciCase{l, k, k})
+			cs = append(cs, ciCase{lang: l, name: k, kind: k})
 		}
 	}
-	return append(cs, ciCase{"python", "pass-uv", "pass"})
+	return append(cs,
+		ciCase{lang: "python", name: "pass-uv", kind: "pass"},
+		ciCase{lang: "node", name: "pass-bun", kind: "pass", wantOut: "bun install v"},
+		ciCase{lang: "node", name: "pass-pnpm", kind: "pass", wantOut: "pnpm"},
+		// npm's "added 1 package" proves the corepack bootstrap ran.
+		ciCase{lang: "node", name: "pass-pnpm", kind: "pass", image: "node25", wantOut: "added 1 package"},
+	)
 }()
 
 type ciStep struct {
@@ -102,11 +119,11 @@ func ciSelected(lang string) bool {
 	return false
 }
 
-func ciImage(lang string) string {
-	if v := os.Getenv("SHIPGUARD_CI_IMAGE_" + strings.ToUpper(lang)); v != "" {
+func ciImage(key string) string {
+	if v := os.Getenv("SHIPGUARD_CI_IMAGE_" + strings.ToUpper(key)); v != "" {
 		return v
 	}
-	return ciImages[lang]
+	return ciImages[key]
 }
 
 // buildLinuxBinary builds shipguard for the Docker server's platform: the
@@ -175,14 +192,18 @@ func TestCIFixtures(t *testing.T) {
 		if !ciSelected(c.lang) {
 			continue
 		}
-		t.Run(c.lang+"/"+c.name, func(t *testing.T) {
+		name := c.lang + "/" + c.name
+		if c.image != "" {
+			name += "@" + c.image
+		}
+		t.Run(name, func(t *testing.T) {
 			runCICase(t, bin, c)
 		})
 	}
 }
 
 func runCICase(t *testing.T, bin string, c ciCase) {
-	img := ciImage(c.lang)
+	img := ciImage(c.imageKey())
 	dir := t.TempDir()
 	// The container runs as root; make its output removable by the host user.
 	t.Cleanup(func() {
@@ -229,6 +250,9 @@ func runCICase(t *testing.T, bin string, c ciCase) {
 	}
 	if code != wantCode {
 		t.Errorf("exit = %d, want %d", code, wantCode)
+	}
+	if c.wantOut != "" && !strings.Contains(out, c.wantOut) {
+		t.Errorf("output does not contain %q", c.wantOut)
 	}
 	if got := res.step(t, "install").Status; got != "passed" {
 		t.Errorf("install = %s, want passed", got)

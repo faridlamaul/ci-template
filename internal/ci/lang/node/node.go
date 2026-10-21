@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -141,6 +142,18 @@ func yarnBerry(dir string, pkg pkgJSON) bool {
 	return false
 }
 
+var semverRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// corepackBootstrap installs the pinned corepack with npm when the image has
+// none: Node 25 and later no longer bundle it.
+func corepackBootstrap(defaults map[string]string) (ci.Cmd, error) {
+	v := defaults["COREPACK_VERSION"]
+	if !semverRe.MatchString(v) {
+		return ci.Cmd{}, fmt.Errorf("COREPACK_VERSION must be X.Y.Z, got %q", v)
+	}
+	return ci.Cmd{Shell: "command -v corepack >/dev/null 2>&1 || npm install -g corepack@" + v}, nil
+}
+
 // Steps returns install, lint, test and build.
 func (Node) Steps(ctx context.Context, env ci.Env, _ ci.Detection, cfg policy.CIConfig) ([]ci.Step, error) {
 	to := cfg.Timeouts.PerStep
@@ -169,13 +182,21 @@ func (Node) Steps(ctx context.Context, env ci.Env, _ ci.Detection, cfg policy.CI
 	case "npm":
 		install = []ci.Cmd{{Argv: []string{"npm", "ci"}}}
 	case "pnpm":
-		install = []ci.Cmd{{Argv: []string{"corepack", "enable", "pnpm"}}, {Argv: []string{"pnpm", "install", "--frozen-lockfile"}}}
+		boot, err := corepackBootstrap(env.Defaults)
+		if err != nil {
+			return nil, err
+		}
+		install = []ci.Cmd{boot, {Argv: []string{"corepack", "enable", "pnpm"}}, {Argv: []string{"pnpm", "install", "--frozen-lockfile"}}}
 	case "yarn":
+		boot, err := corepackBootstrap(env.Defaults)
+		if err != nil {
+			return nil, err
+		}
 		flag := "--frozen-lockfile"
 		if yarnBerry(env.Dir, pkg) {
 			flag = "--immutable"
 		}
-		install = []ci.Cmd{{Argv: []string{"corepack", "enable", "yarn"}}, {Argv: []string{"yarn", "install", flag}}}
+		install = []ci.Cmd{boot, {Argv: []string{"corepack", "enable", "yarn"}}, {Argv: []string{"yarn", "install", flag}}}
 	case "bun":
 		install = []ci.Cmd{{Argv: []string{bin, "install", "--frozen-lockfile"}}}
 	}
