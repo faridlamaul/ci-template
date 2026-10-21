@@ -114,6 +114,7 @@ func blocks(f finding.Finding, cfg Config) bool {
 	if !ok {
 		return false
 	}
+	// Only trivy-license emits license findings, always as SCA.
 	license := finding.IsLicense(f)
 	if license && !licenseDenied(strings.TrimPrefix(f.ID, finding.LicensePrefix), cfg) {
 		return false

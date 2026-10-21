@@ -8,7 +8,7 @@ shipguard reads one policy file, `.shipguard.yaml`, from the repository root. If
 
 Precedence, lowest to highest: built-in defaults, `.shipguard.yaml`, then adapter inputs and CLI flags (`--mode` and friends).
 
-Unknown keys are errors (exit code 2). Every snippet on this page marked as a config is checked against the real CLI by `make docs-check`.
+Unknown keys are errors (exit code 2). An empty file, or one with only comments, means the defaults. Every snippet on this page marked as a config is checked against the real CLI by `make docs-check`.
 
 ## The defaults
 
@@ -65,7 +65,7 @@ The file holds a single YAML document; a second document with content after a `-
 | `scanners.sca.enabled` | bool | `true` | osv-scanner for vulnerabilities, trivy for licenses. |
 | `scanners.sca.licenses.deny` | list of strings | `[]` | SPDX license names to block. Matches the whole family. |
 | `scanners.iac.enabled` | bool | `true` | trivy config scan. |
-| `timeouts.per_scanner` | duration string | `15m` | A duration string such as `15m` or `1h`; a bare number is an error. |
+| `timeouts.per_scanner` | duration string | `15m` | A positive duration in `ms`, `s`, `m` or `h` units, such as `90s`, `15m` or `1h30m`. A bare number, a smaller unit (`us`, `ns`) or a leading dot (`.5s`) is an error. |
 | `policy.fail_on.<category>` | threshold | see above | Categories: `secrets`, `sast`, `sca`, `iac`. Must not be empty. |
 | `exceptions` | list | `[]` | See [Exceptions](#exceptions). |
 
@@ -90,8 +90,8 @@ exceptions:
 ```
 
 - `id`, `reason` and `expires` are required. A missing field is a config error.
-- `expires` is a date in `YYYY-MM-DD` form. The exception stays active through the end of that day (UTC) and stops suppressing the next day. An expired exception that matched a finding is listed in the summary; one that matches nothing is not reported.
-- License findings have the id `license:<SPDX>`, for example `license:AGPL-3.0`. Use that as the exception `id`.
+- `expires` is a date in `YYYY-MM-DD` form. An impossible date such as `2026-02-30` is a config error; the JSON Schema only checks the shape, so your editor may not flag it. The exception stays active through the end of that day (UTC) and stops suppressing the next day. An expired exception that matched a finding is listed in the summary; one that matches nothing is not reported.
+- License findings are SCA findings with the id `license:<SPDX>`, for example `license:AGPL-3.0`. Use that as the exception `id`.
 - Findings suppressed by an exception are left out of SARIF, GitLab and Bitbucket reports; they remain in .shipguard/findings.json and the summary.
 - This file is the only place to suppress a finding. Scanner ignore files and inline comments are ignored (see [Scanner-native config is ignored](#scanner-native-config-is-ignored)).
 
@@ -204,7 +204,7 @@ Every CLI flag can also be set as `SHIPGUARD_<FLAG>`. An explicit flag wins, the
 | `--dir` | `SHIPGUARD_DIR` | Repository directory. Default: `GITHUB_WORKSPACE`, `CI_PROJECT_DIR` or `BITBUCKET_CLONE_DIR`, else the current directory. |
 | `--config` | `SHIPGUARD_CONFIG` | Default `.shipguard.yaml`. |
 | `--mode` | `SHIPGUARD_MODE` | `enforce` or `audit`. |
-| `--scanners` | `SHIPGUARD_SCANNERS` | `all`, or a comma list of `secrets`, `sast`, `sca`, `iac`. |
+| `--scanners` | `SHIPGUARD_SCANNERS` | `all`, or a comma list of `secrets`, `sast`, `sca`, `iac`. An empty value also means `all`. |
 | `--format` | `SHIPGUARD_FORMAT` | `report` and `run` only: `sarif`, `gitlab`, `bitbucket` or `none`. Default by platform. |
 | `--code-insights` | `SHIPGUARD_CODE_INSIGHTS` | `report` and `run` only: `false` disables Bitbucket Code Insights. |
 
