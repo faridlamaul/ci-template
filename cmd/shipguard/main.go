@@ -143,7 +143,7 @@ func resolveFlags(fs *pflag.FlagSet, g *globals, getenv func(string) string) err
 	bitbucket := getenv("BITBUCKET_BUILD_NUMBER") != ""
 	var err error
 	fs.VisitAll(func(f *pflag.Flag) {
-		if f.Changed || err != nil {
+		if f.Changed || err != nil || len(f.Annotations[noEnvAnnotation]) > 0 {
 			return
 		}
 		name := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))

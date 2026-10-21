@@ -21,6 +21,7 @@ type fakeLang struct {
 	toolchainErr error
 	stepsErr     error
 	gotCfg       *policy.CIConfig
+	junit        string // JUnit glob for the test step
 }
 
 func (f *fakeLang) Name() string      { return "fake" }
@@ -39,6 +40,9 @@ func (f *fakeLang) Steps(_ context.Context, _ ci.Env, _ ci.Detection, cfg policy
 	var out []ci.Step
 	for _, n := range []ci.StepName{"install", "lint", "test", "build"} {
 		s := ci.Step{Name: n}
+		if n == "test" && f.junit != "" {
+			s.JUnit = []string{f.junit}
+		}
 		if sh := f.steps[n]; sh != "" {
 			s.Cmds = []ci.Cmd{{Shell: sh}}
 		} else {
@@ -237,5 +241,70 @@ func TestCIStepArgs(t *testing.T) {
 	}
 	if i, j := strings.Index(out, "ran-install"), strings.Index(out, "ran-test"); i > j {
 		t.Errorf("order: %s", out)
+	}
+}
+
+func TestCINonLinuxPinnedTools(t *testing.T) {
+	l := &fakeLang{}
+	dir := setupCI(t, l, nil)
+	ciToolResolver = func(d string) (func(context.Context, string) (string, error), map[string]string, error) {
+		return newToolResolver(d, "darwin", "arm64")
+	}
+	// a language that needs a pinned tool
+	ciLanguages = func() []ci.Language { return []ci.Language{&toolLang{fakeLang: l}} }
+	code, _, stderr := runCI(dir, nil)
+	want := "error: pinned tools are only available on linux (running on darwin/arm64); run in a Linux CI image or set ci.steps.<step>.run"
+	if code != 2 || strings.Count(stderr, want) != 1 {
+		t.Fatalf("exit = %d, stderr = %q", code, stderr)
+	}
+}
+
+type toolLang struct{ *fakeLang }
+
+func (l *toolLang) Steps(ctx context.Context, env ci.Env, _ ci.Detection, _ policy.CIConfig) ([]ci.Step, error) {
+	if _, err := env.Tools(ctx, "ruff"); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func TestCICancelledBeforeToolchain(t *testing.T) {
+	dir := setupCI(t, &fakeLang{toolchainErr: errors.New("boom")}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, errb bytes.Buffer
+	code := execute(ctx, []string{"ci", "--dir", dir}, envOf(nil), &out, &errb)
+	if code != 2 || !strings.Contains(errb.String(), "cancelled") || strings.Contains(errb.String(), "not found") {
+		t.Fatalf("exit = %d, stderr = %q", code, errb.String())
+	}
+}
+
+func TestCIDetectIgnoresShipguardFormat(t *testing.T) {
+	dir := setupCI(t, &fakeLang{version: "1.22"}, nil)
+	var out, errb bytes.Buffer
+	code := execute(context.Background(), []string{"ci", "detect", "--dir", dir}, envOf(map[string]string{"SHIPGUARD_FORMAT": "sarif"}), &out, &errb)
+	if code != 0 || out.String() != "fake 1.22 (fake.marker)\n" {
+		t.Fatalf("exit = %d, out = %q, err = %q", code, out.String(), errb.String())
+	}
+}
+
+func TestCILanguageEnv(t *testing.T) {
+	l := &fakeLang{steps: map[ci.StepName]string{"install": "true", "test": "true"}}
+	dir := setupCI(t, l, nil)
+	if code, _, stderr := runCI(dir, map[string]string{"SHIPGUARD_LANGUAGE": "fake"}); code != 0 {
+		t.Fatalf("exit = %d: %s", code, stderr)
+	}
+	if l.gotCfg.Language != "fake" {
+		t.Fatalf("cfg = %+v", l.gotCfg)
+	}
+}
+
+func TestCIGitHubAnnotations(t *testing.T) {
+	junit := `<testsuite name="s" tests="1" failures="1"><testcase classname="c" name="TestBad"><failure message="boom">trace</failure></testcase></testsuite>`
+	l := &fakeLang{junit: "j.xml", steps: map[ci.StepName]string{"install": "true", "test": "cat > j.xml <<'EOF'\n" + junit + "\nEOF\nexit 1"}}
+	dir := setupCI(t, l, nil)
+	code, out, stderr := runCI(dir, map[string]string{"GITHUB_ACTIONS": "true"})
+	if code != 1 || !strings.Contains(out, "::error") || !strings.Contains(out, "TestBad") {
+		t.Fatalf("exit = %d, out = %q, stderr = %q", code, out, stderr)
 	}
 }

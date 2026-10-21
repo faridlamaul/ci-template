@@ -33,12 +33,22 @@ var ciLanguages = lang.All
 // ciToolResolver returns the tool lookup used by language steps and the
 // pinned defaults table; tests replace it so they never hit the network.
 var ciToolResolver = func(dir string) (func(context.Context, string) (string, error), map[string]string, error) {
+	return newToolResolver(dir, runtime.GOOS, runtime.GOARCH)
+}
+
+// newToolResolver builds the real resolver for the given platform. The pinned
+// tools are Linux binaries: elsewhere fetching one is an error (steps with a
+// custom run command fetch nothing and still work).
+func newToolResolver(dir, goos, goarch string) (func(context.Context, string) (string, error), map[string]string, error) {
 	specs, defaults, err := tools.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load tools: %w", err)
 	}
-	cache := &tools.Cache{Dir: filepath.Join(dir, ".shipguard-cache", "tools"), Arch: runtime.GOARCH}
+	cache := &tools.Cache{Dir: filepath.Join(dir, ".shipguard-cache", "tools"), Arch: goarch}
 	return func(ctx context.Context, name string) (string, error) {
+		if goos != "linux" {
+			return "", fmt.Errorf("pinned tools are only available on linux (running on %s/%s); run in a Linux CI image or set ci.steps.<step>.run", goos, goarch)
+		}
 		t, ok := specs[name]
 		if !ok {
 			return "", fmt.Errorf("unknown tool %q", name)
@@ -46,6 +56,9 @@ var ciToolResolver = func(dir string) (func(context.Context, string) (string, er
 		return cache.Ensure(ctx, t)
 	}, defaults, nil
 }
+
+// noEnvAnnotation marks a flag that resolveFlags must not fill from the environment.
+const noEnvAnnotation = "shipguard_noenv"
 
 // ciInputs holds the ci-local flag values.
 type ciInputs struct {
@@ -77,6 +90,8 @@ func ciCmd(g *globals, getenv func(string) string, stdout, stderr io.Writer) *co
 		},
 	}
 	detectCmd.Flags().StringVar(&in.format, "format", "text", "output format: text or json")
+	// SHIPGUARD_FORMAT belongs to `report`; it must not leak into detect.
+	_ = detectCmd.Flags().SetAnnotation("format", noEnvAnnotation, []string{"true"})
 	cmd.AddCommand(detectCmd)
 	return cmd
 }
@@ -178,6 +193,9 @@ func doCI(ctx context.Context, g *globals, in *ciInputs, args []string, getenv f
 	if err != nil {
 		return fail(err)
 	}
+	if ctx.Err() != nil {
+		return fail(errors.New("cancelled"))
+	}
 	installed, err := l.Toolchain(ctx, func(ctx context.Context, argv ...string) (string, error) {
 		c := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		c.Dir = g.dir
@@ -185,6 +203,9 @@ func doCI(ctx context.Context, g *globals, in *ciInputs, args []string, getenv f
 		return strings.TrimSpace(string(b)), err
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return fail(errors.New("cancelled"))
+		}
 		return fail(fmt.Errorf("toolchain %s not found: %w", l.Name(), err))
 	}
 	var warning string
