@@ -40,7 +40,12 @@ amd64=${SHIPGUARD_BIN_SHA256_AMD64:-}
 arm64=${SHIPGUARD_BIN_SHA256_ARM64:-}
 if [ "$need_hash" = 1 ]; then
   for pair in "AMD64:$amd64" "ARM64:$arm64"; do
-    if ! printf '%s' "${pair#*:}" | grep -Eq '^[0-9a-f]{64}$'; then
+    # The whole value is checked (not line by line): it is spliced into sed.
+    v=${pair#*:}
+    ok=1
+    [ "${#v}" -eq 64 ] || ok=0
+    case $v in *[!0123456789abcdef]*) ok=0 ;; esac
+    if [ "$ok" = 0 ]; then
       echo "render-gitlab: SHIPGUARD_BIN_SHA256_${pair%%:*} must be 64 lowercase hex characters" >&2
       exit 2
     fi

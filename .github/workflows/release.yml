@@ -188,11 +188,47 @@ jobs:
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
+      # Re-run safety: GoReleaser fails when an asset already exists, and a
+      # half-uploaded set would mix two builds. So a complete set is verified
+      # (cosign bundle against this workflow's identity) and reused, a partial
+      # set fails, and only an empty release is built.
+      - id: existing
+        name: Look for published assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release.outputs.version }}
+        run: |
+          want="shipguard_${TAG#v}_linux_amd64.tar.gz shipguard_${TAG#v}_linux_arm64.tar.gz checksums.txt checksums.txt.sigstore.json"
+          have=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          missing=""
+          found=0
+          for a in $want; do
+            if printf '%s\n' "$have" | grep -qxF "$a"; then found=$((found + 1)); else missing="$missing $a"; fi
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "state=none" >> "$GITHUB_OUTPUT"
+          elif [ "$found" -lt 4 ]; then
+            echo "::error::release ${TAG} has only some binary assets; missing:${missing}. Delete the partial assets and re-run."
+            exit 1
+          else
+            mkdir -p published
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir published \
+              --pattern checksums.txt --pattern checksums.txt.sigstore.json
+            cosign verify-blob published/checksums.txt \
+              --bundle published/checksums.txt.sigstore.json \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/heads/main"
+            echo "::notice::${TAG} binaries already published and verified; not rebuilt"
+            echo "state=complete" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build, sign and upload archives
+        if: steps.existing.outputs.state == 'none'
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: "~> v2"
+          # Exact version: this job holds contents: write and id-token: write.
+          version: v2.15.4
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -203,14 +239,22 @@ jobs:
         name: Read the archive hashes
         env:
           TAG: ${{ needs.release.outputs.version }}
+          STATE: ${{ steps.existing.outputs.state }}
         run: |
+          sums=dist/checksums.txt
+          if [ "$STATE" = complete ]; then sums=published/checksums.txt; fi
           for arch in amd64 arm64; do
             file="shipguard_${TAG#v}_linux_${arch}.tar.gz"
-            hash=$(awk -v f="$file" '$2 == f { print $1 }' dist/checksums.txt)
-            if ! printf '%s' "$hash" | grep -Eq '^[0-9a-f]{64}$'; then
-              echo "::error::no valid sha256 for ${file} in dist/checksums.txt"
+            hash=$(awk -v f="$file" '$2 == f { print $1 }' "$sums")
+            # The whole value must be 64 lowercase hex characters: exactly one
+            # line, no other character, so it is safe to splice into sed.
+            if [ "${#hash}" -ne 64 ]; then
+              echo "::error::no single sha256 for ${file} in ${sums}"
               exit 1
             fi
+            case $hash in
+              *[!0123456789abcdef]*) echo "::error::sha256 for ${file} is not lowercase hex"; exit 1 ;;
+            esac
             echo "sha256_${arch}=${hash}" >> "$GITHUB_OUTPUT"
           done
 

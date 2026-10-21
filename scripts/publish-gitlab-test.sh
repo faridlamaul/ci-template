@@ -163,6 +163,11 @@ render_rc "render without hashes" 2 -u SHIPGUARD_BIN_SHA256_AMD64 -u SHIPGUARD_B
 render_rc "render with one hash" 2 -u SHIPGUARD_BIN_SHA256_ARM64 SHIPGUARD_BIN_SHA256_AMD64="$h1"
 render_rc "render with short hash" 2 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64=abc
 render_rc "render with uppercase hash" 2 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$(printf 'A%.0s' $(seq 64))"
+nl='
+'
+render_rc "render with a multi-line hash" 2 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$h2${nl}$h2"
+render_rc "render with a trailing-newline hash" 2 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$h2$nl"
+render_rc "render with a sed payload" 2 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$h2/;e id;s/x/$nl$h2"
 render_rc "render with both hashes" 0 SHIPGUARD_BIN_SHA256_AMD64="$h1" SHIPGUARD_BIN_SHA256_ARM64="$h2"
 if grep -qx "amd64: $h1" "$work/dist-r/ci.yml" && grep -qx "arm64: $h2" "$work/dist-r/ci.yml"; then pass "ci.yml has both hashes"; else fail "ci.yml: $(cat "$work/dist-r/ci.yml")"; fi
 if grep -q '__SHIPGUARD_' "$work/dist-r/ci.yml" "$work/dist-r/scan.yml"; then fail "placeholder left"; else pass "no placeholder left"; fi
