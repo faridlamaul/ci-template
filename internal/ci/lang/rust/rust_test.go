@@ -52,6 +52,7 @@ func TestRustVersionForms(t *testing.T) {
 		{"legacy", map[string]string{"rust-toolchain": "\n1.85\n"}, "1.85", "rust-toolchain"},
 		{"legacy toml form", map[string]string{"rust-toolchain": "[toolchain]\nchannel = \"1.80\"\n"}, "1.80", "rust-toolchain"},
 		{"toml wins", map[string]string{"rust-toolchain.toml": "[toolchain]\nchannel = \"1.85\"\n", "rust-toolchain": "1.70"}, "1.85", "rust-toolchain.toml"},
+		{"legacy comment", map[string]string{"rust-toolchain": "# pin\n1.85\n"}, "1.85", "rust-toolchain"},
 		{"none", map[string]string{"Cargo.toml": ""}, "stable", "default"},
 	}
 	for _, c := range cases {
@@ -113,6 +114,18 @@ func TestRustLockedFlag(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestRustInstallComponents(t *testing.T) {
+	steps, err := Rust{}.Steps(context.Background(), fakeEnv(project(t, map[string]string{"Cargo.toml": ""})), ci.Detection{}, policy.CIConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := steps[0].Cmds
+	want := "if command -v rustup >/dev/null 2>&1; then rustup component add clippy rustfmt; fi"
+	if len(c) != 2 || c[0].Shell != want || strings.Join(c[1].Argv, " ") != "cargo fetch" {
+		t.Fatalf("install cmds = %+v", c)
 	}
 }
 

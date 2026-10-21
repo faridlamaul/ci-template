@@ -99,7 +99,7 @@ func (Rust) Detect(dir string, defaults map[string]string) (ci.Detection, error)
 		}
 	} else {
 		for _, l := range strings.Split(leg, "\n") {
-			if l = strings.TrimSpace(l); l != "" {
+			if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
 				return ci.Detection{Language: "rust", Version: l, Source: "rust-toolchain"}, nil
 			}
 		}
@@ -161,7 +161,11 @@ func (Rust) Steps(ctx context.Context, env ci.Env, _ ci.Detection, cfg policy.CI
 		return ci.Cmd{Argv: append(append([]string{"cargo"}, args...), locked...)}
 	}
 
-	steps := []ci.Step{{Name: "install", Timeout: to, Cmds: []ci.Cmd{cargo("fetch")}}}
+	steps := []ci.Step{{Name: "install", Timeout: to, Cmds: []ci.Cmd{
+		// the official rust image ships without clippy and rustfmt
+		{Shell: "if command -v rustup >/dev/null 2>&1; then rustup component add clippy rustfmt; fi"},
+		cargo("fetch"),
+	}}}
 
 	// add builds a step: a disabled step is skipped, a run override replaces the default
 	// commands (and drops their junit/coverage), and defaults are computed only when used.
