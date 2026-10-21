@@ -112,6 +112,8 @@ cosign verify ghcr.io/faridlamaul/shipguard:vX.Y.Z \
 gh attestation verify oci://ghcr.io/faridlamaul/shipguard:vX.Y.Z --repo faridlamaul/shipguard
 ```
 
+**Scanner binaries.** Each scanner in the image is pinned by version and SHA-256 in `versions.env`, and the image build fails on a mismatch. opengrep publishes no checksums file, so its binaries are verified against the SHA-256 digest GitHub records for each release asset: that digest comes from the same GitHub release channel as the binary, so it protects against corruption and later tampering, not against a compromised upstream release.
+
 **What the container sees.** The scan runs in the image with only the workspace mounted. `GITHUB_TOKEN`, the runner command files and other secrets are not passed in; the adapter forwards an explicit allowlist of variables.
 
 ## Tier notes

@@ -57,7 +57,7 @@ Results are posted as a Code Insights report on the commit. By default shipguard
 
 | Variable | Description |
 |---|---|
-| `SHIPGUARD_BITBUCKET_PROXY` | Override the proxy URL. Set `none` to post directly with no proxy; you then need `SHIPGUARD_BITBUCKET_TOKEN`, or the upload fails (a warning only). |
+| `SHIPGUARD_BITBUCKET_PROXY` | Override the proxy URL. Set `none` to post directly with no proxy; you then need `SHIPGUARD_BITBUCKET_TOKEN`, or the upload fails (a warning only). An invalid URL is an upload error (a warning naming the variable, not its value). |
 | `SHIPGUARD_BITBUCKET_TOKEN` | Bearer token for the Bitbucket API. When set, the proxy is not used. |
 
 A failed upload is a warning. It never changes the gate result.
