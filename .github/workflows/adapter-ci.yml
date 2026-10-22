@@ -65,3 +65,32 @@ jobs:
     uses: ./.github/workflows/build-test.yml
     with:
       dir: testdata/ci/python/pass
+
+  release-dry-run:
+    name: Release workflow (dry run)
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release-artifacts.yml
+    with:
+      dry-run: true
+      dir: e2e/testdata/release/clean
+      steps: "version image"
+
+  release-dry-run-assert:
+    name: Assert the release dry run
+    needs: release-dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert nothing was released and the steps passed
+        env:
+          RESULT: ${{ needs.release-dry-run.result }}
+          RELEASED: ${{ needs.release-dry-run.outputs.released }}
+        run: |
+          echo "result=$RESULT released=$RELEASED"
+          test "$RESULT" = "success"
+          test "$RELEASED" = "false"

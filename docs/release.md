@@ -95,6 +95,22 @@ On GitHub the command appends `released`, `tag`, `version`, `image` and `image_d
 | `1` | The image gate blocked, or a step failed. |
 | `2` | Usage or config error: unknown step, invalid `.shipguard.yaml`, `release.image.name` unset without `GITHUB_REPOSITORY`. |
 
+## GitHub
+
+The reusable workflow installs shipguard, logs in to ghcr.io and runs the command; the caller grants `contents: write`, `packages: write`, `id-token: write` (keyless signing) and `attestations: write`. It attests the image and `dist/checksums.txt`.
+
+```yaml
+jobs:
+  release:
+    uses: faridlamaul/shipguard/.github/workflows/release-artifacts.yml@vX.Y.Z
+    permissions: { contents: write, packages: write, id-token: write, attestations: write }
+    with:
+      steps: version binaries image   # optional; empty runs every applicable step
+      dry-run: false
+```
+
+See [GitHub](github.md#releases) for the inputs and outputs.
+
 ## Re-running a release
 
 A re-run after a failed build finishes the release without creating a second tag: the version step reuses the tag at `HEAD`, the binaries step runs again, and an image already pushed with the same digest is not pushed again.

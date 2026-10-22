@@ -7,3 +7,6 @@ paths:
   .github/workflows/build-test.yml:
     ignore:
       - 'property "workflow_(ref|sha)" is not defined in object type'
+  .github/workflows/release-artifacts.yml:
+    ignore:
+      - 'property "workflow_(ref|sha)" is not defined in object type'
