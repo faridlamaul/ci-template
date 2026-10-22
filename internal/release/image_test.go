@@ -247,7 +247,7 @@ func TestImagePushSignOrder(t *testing.T) {
 		t.Fatalf("calls = %v", got)
 	}
 	tr := f.all("trivy")
-	cache := filepath.Join(o.Dir, ".shipguard-cache", "trivy")
+	cache := filepath.Join(o.CacheDir, "trivy")
 	for i, p := range []string{"linux/amd64", "linux/arm64"} {
 		a := strings.Join(tr[i].args, " ")
 		if !strings.Contains(a, "--platform "+p+" --scanners vuln --format json --cache-dir "+cache) || !strings.Contains(a, "image --input ") {

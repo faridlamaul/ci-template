@@ -184,7 +184,7 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 		return fail("read built image: %v", err)
 	}
 
-	cache := filepath.Join(o.Dir, ".shipguard-cache", "trivy")
+	cache := filepath.Join(o.CacheDir, "trivy")
 	var findings []finding.Finding
 	for _, p := range cfg.Platforms {
 		out, err := o.Exec.Run(ctx, o.Dir, nil, io.Discard, trivy, "image", "--input", layout,

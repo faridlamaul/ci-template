@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -19,17 +20,68 @@ func setTag(r *Result, tag string) {
 	r.Released, r.Tag, r.Version = true, tag, strings.TrimPrefix(tag, "v")
 }
 
-// headTag returns the exact vX.Y.Z tag at HEAD, or "".
+// headTag returns the release tag at HEAD, or "". With several vX.Y.Z tags the
+// highest stable one wins, else the highest prerelease.
 func headTag(ctx context.Context, o Options) string {
-	out, err := o.Exec.Run(ctx, o.Dir, nil, io.Discard, "git", "describe", "--exact-match", "--tags", "--match", "v*")
+	out, err := o.Exec.Run(ctx, o.Dir, nil, io.Discard, "git", "tag", "--points-at", "HEAD", "--list", "v*")
 	if err != nil {
 		return ""
 	}
-	tag := strings.TrimSpace(string(out))
-	if !tagRe.MatchString(tag) {
-		return ""
+	best := ""
+	for _, tag := range strings.Fields(string(out)) {
+		if tagRe.MatchString(tag) && (best == "" || tagLess(best, tag)) {
+			best = tag
+		}
 	}
-	return tag
+	return best
+}
+
+// tagLess orders valid release tags by semver precedence.
+func tagLess(a, b string) bool {
+	core := func(t string) ([3]int, string) {
+		t = strings.TrimPrefix(t, "v")
+		t, pre, _ := strings.Cut(t, "-")
+		var n [3]int
+		for i, p := range strings.SplitN(t, ".", 3) {
+			n[i], _ = strconv.Atoi(p)
+		}
+		return n, pre
+	}
+	na, pa := core(a)
+	nb, pb := core(b)
+	if na != nb {
+		for i := range na {
+			if na[i] != nb[i] {
+				return na[i] < nb[i]
+			}
+		}
+	}
+	switch {
+	case pa == pb:
+		return false
+	case pa == "": // a stable release outranks its prereleases
+		return false
+	case pb == "":
+		return true
+	}
+	ia, ib := strings.Split(pa, "."), strings.Split(pb, ".")
+	for i := 0; i < len(ia) && i < len(ib); i++ {
+		if ia[i] == ib[i] {
+			continue
+		}
+		x, xerr := strconv.Atoi(ia[i])
+		y, yerr := strconv.Atoi(ib[i])
+		switch {
+		case xerr == nil && yerr == nil:
+			return x < y
+		case xerr == nil: // numeric identifiers sort below alphanumeric ones
+			return true
+		case yerr == nil:
+			return false
+		}
+		return ia[i] < ib[i]
+	}
+	return len(ia) < len(ib)
 }
 
 // resolveHeadTag is the version step without shiptag, used when it is not selected.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
@@ -39,6 +40,7 @@ func (OSExec) Run(ctx context.Context, dir string, env []string, out io.Writer, 
 // Options configures Run.
 type Options struct {
 	Dir        string
+	CacheDir   string // pinned-tool and trivy cache root, outside the repository
 	Config     policy.Config
 	Steps      []string // subset of "version","binaries","image"; empty = all
 	DryRun     bool
@@ -97,6 +99,13 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 	if o.Out == nil {
 		o.Out = io.Discard
+	}
+	if o.CacheDir == "" {
+		d, err := CacheRoot(o.Getenv)
+		if err != nil {
+			return Result{}, fmt.Errorf("%w: %v", policy.ErrConfig, err)
+		}
+		o.CacheDir = d
 	}
 	want := func(n string) bool { return len(sel) == 0 || sel[n] }
 
@@ -164,3 +173,18 @@ func (r Result) ExitCode() int {
 
 // imageStep is a seam so tests can prove the image step was invoked.
 var imageStep = image
+
+// CacheRoot is where the release command keeps its pinned tools and the trivy
+// cache: outside the repository, so they never reach the docker build context
+// or the working-tree status. It is $RUNNER_TEMP/shipguard-cache on a CI
+// runner, else the user cache directory.
+func CacheRoot(getenv func(string) string) (string, error) {
+	if t := getenv("RUNNER_TEMP"); t != "" {
+		return filepath.Join(t, "shipguard-cache"), nil
+	}
+	d, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("release cache directory: %w", err)
+	}
+	return filepath.Join(d, "shipguard"), nil
+}

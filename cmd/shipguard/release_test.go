@@ -30,9 +30,6 @@ func (f *relExec) Run(_ context.Context, _ string, _ []string, _ io.Writer, name
 			}
 		}
 	case "git":
-		if args[0] == "describe" {
-			return nil, io.ErrUnexpectedEOF
-		}
 		if args[0] == "rev-parse" {
 			return nil, nil
 		}
@@ -145,5 +142,22 @@ func TestReleaseNonLinuxMessage(t *testing.T) {
 	_, err = fn(context.Background(), "trivy")
 	if err == nil || strings.Contains(err.Error(), "ci.steps") || !strings.Contains(err.Error(), "shipguard release") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReleaseToolCacheOutsideRepo(t *testing.T) {
+	dir := releaseSetup(t, &relExec{shiptag: "released=false\n"})
+	var got string
+	inner := releaseToolResolver
+	releaseToolResolver = func(cacheRoot string) (func(context.Context, string) (string, error), map[string]string, error) {
+		got = cacheRoot
+		return inner(cacheRoot)
+	}
+	rt := t.TempDir()
+	if code, _, errb := runRelease(dir, map[string]string{"RUNNER_TEMP": rt}); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errb)
+	}
+	if want := filepath.Join(rt, "shipguard-cache"); got != want {
+		t.Fatalf("tool cache root = %q, want %q", got, want)
 	}
 }

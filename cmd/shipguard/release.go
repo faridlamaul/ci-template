@@ -19,9 +19,10 @@ import (
 // releaseExec runs the external commands of the release steps; tests replace it.
 var releaseExec release.Exec = release.OSExec{}
 
-// releaseToolResolver returns the tool lookup for the release steps; tests replace it.
-var releaseToolResolver = func(dir string) (func(context.Context, string) (string, error), map[string]string, error) {
-	return newToolResolverMsg(dir, runtime.GOOS, runtime.GOARCH, func(goos, goarch string) string {
+// releaseToolResolver returns the tool lookup for the release steps; the pinned
+// tools are cached under cacheRoot, outside the repository. Tests replace it.
+var releaseToolResolver = func(cacheRoot string) (func(context.Context, string) (string, error), map[string]string, error) {
+	return newToolResolverMsg(filepath.Join(cacheRoot, "tools"), runtime.GOOS, runtime.GOARCH, func(goos, goarch string) string {
 		return fmt.Sprintf("pinned release tools are only available on linux (running on %s/%s); run shipguard release in a Linux CI runner", goos, goarch)
 	})
 }
@@ -65,13 +66,17 @@ func doRelease(ctx context.Context, g *globals, in *releaseInputs, args []string
 	if err != nil {
 		return fail(err)
 	}
-	toolFn, _, err := releaseToolResolver(g.dir)
+	cacheRoot, err := release.CacheRoot(getenv)
+	if err != nil {
+		return fail(err)
+	}
+	toolFn, _, err := releaseToolResolver(cacheRoot)
 	if err != nil {
 		return fail(err)
 	}
 	var outErr error
 	res, err := release.Run(ctx, release.Options{
-		Dir: g.dir, Config: cfg, Steps: args, DryRun: in.dryRun, Prerelease: in.prerelease,
+		Dir: g.dir, CacheDir: cacheRoot, Config: cfg, Steps: args, DryRun: in.dryRun, Prerelease: in.prerelease,
 		Tool: toolFn, Exec: releaseExec, Getenv: getenv, Out: stdout,
 	})
 	if len(res.Steps) > 0 {

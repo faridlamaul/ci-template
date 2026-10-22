@@ -103,6 +103,8 @@ jobs:
 
 Inputs: `steps`, `dir`, `config`, `prerelease`, `dry-run`, `shipguard-version` and `runs-on`. Outputs: `released`, `tag`, `version`, `image` and `image_digest`. See [shipguard release](release.md) for the steps, the image gate and the configuration.
 
+Call it only from trusted refs (a push to the default branch, a tag, `workflow_dispatch`), never from `pull_request_target` or an untrusted ref: `GITHUB_TOKEN` and the OIDC token are visible to GoReleaser hooks. Pinning `@vX.Y.Z` installs the signed release binary; pinning a commit SHA builds shipguard from source.
+
 ## Policy on pull requests
 
 On a pull request the policy is read from the base branch, and the summary warns when the PR changes `.shipguard.yaml`. Protect that file with CODEOWNERS, and add it in its own PR before you enforce. See [Configuration](configuration.md#pull-requests-the-policy-comes-from-the-base).

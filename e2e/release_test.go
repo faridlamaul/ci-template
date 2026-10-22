@@ -57,6 +57,11 @@ func (r releaseResult) step(t *testing.T, name string) releaseStep {
 	return releaseStep{}
 }
 
+// releaseRunnerTemp is the RUNNER_TEMP of the CLI under test. Its
+// shipguard-cache entry links to the shared cache, so the pinned tools and the
+// trivy database (kept outside the repository) are downloaded once.
+var releaseRunnerTemp string
+
 // releaseEnv is the environment of the CLI under test: the host environment
 // without CI, GitHub, sigstore and shipguard variables, so the run has no
 // ambient OIDC identity and no output files, plus extra.
@@ -79,6 +84,9 @@ func releaseEnv(token bool, extra ...string) []string {
 	}
 	if token {
 		env = append(env, "SIGSTORE_ID_TOKEN=not-a-token")
+	}
+	if releaseRunnerTemp != "" {
+		env = append(env, "RUNNER_TEMP="+releaseRunnerTemp)
 	}
 	return append(env, extra...)
 }
@@ -146,10 +154,8 @@ func pinnedCrane(t *testing.T, cache string) string {
 }
 
 // releaseRepo copies the fixture into a git repo whose HEAD carries releaseTag
-// and writes the config that points the image at the local registry. The
-// shared cache (pinned tools and the trivy database) is linked in as
-// .shipguard-cache, so it is downloaded once for all cases.
-func releaseRepo(t *testing.T, fixture, registry, cache string) string {
+// and writes the config that points the image at the local registry.
+func releaseRepo(t *testing.T, fixture, registry string) string {
 	t.Helper()
 	dir := t.TempDir()
 	copyDir(t, filepath.Join(releaseFixturesDir, fixture), dir)
@@ -157,14 +163,7 @@ func releaseRepo(t *testing.T, fixture, registry, cache string) string {
 	if err := os.WriteFile(filepath.Join(dir, ".shipguard.yaml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(cache, filepath.Join(dir, ".shipguard-cache")); err != nil {
-		t.Fatal(err)
-	}
 	git(t, dir, "init", "-q", "-b", "main")
-	// The cache link is untracked state, not part of the commit.
-	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "exclude"), []byte(".shipguard-cache\n.shipguard/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	commitAll(t, dir, "fixture")
 	git(t, dir, "tag", releaseTag)
 	return dir
@@ -282,11 +281,17 @@ func TestReleaseImage(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	releaseRunnerTemp = t.TempDir()
+	if err := os.Symlink(cache, filepath.Join(releaseRunnerTemp, "shipguard-cache")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { releaseRunnerTemp = "" })
+
 	registry := startRegistry(t)
 	builder := createBuilder(t)
 	crane := pinnedCrane(t, cache)
 
-	clean := releaseRepo(t, "clean", registry, cache)
+	clean := releaseRepo(t, "clean", registry)
 	cleanImage := registry + "/e2e/clean"
 	version := strings.TrimPrefix(releaseTag, "v")
 
@@ -322,7 +327,7 @@ func TestReleaseImage(t *testing.T) {
 	})
 
 	t.Run("vulnerable image is blocked without OIDC", func(t *testing.T) {
-		vuln := releaseRepo(t, "vuln", registry, cache)
+		vuln := releaseRepo(t, "vuln", registry)
 		out, code, res := runReleaseNoOIDC(t, bin, vuln, builder)
 		if code != 1 {
 			t.Fatalf("exit = %d, want 1\n%s", code, out)
@@ -383,7 +388,7 @@ func TestReleaseImage(t *testing.T) {
 	})
 
 	t.Run("vulnerable image is blocked", func(t *testing.T) {
-		vuln := releaseRepo(t, "vuln", registry, cache)
+		vuln := releaseRepo(t, "vuln", registry)
 		vulnImage := registry + "/e2e/vuln"
 		out, code, res := runRelease(t, bin, vuln, builder)
 		if code != 1 {

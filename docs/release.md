@@ -25,7 +25,7 @@ shipguard release --prerelease rc  # release a prerelease (passed to shiptag)
 | Step | Applies when | Does |
 |---|---|---|
 | `version` | always | Runs `shiptag tag` and reads `released` and `tag`. If nothing is released but `HEAD` carries an exact `vX.Y.Z` tag, that tag is used (a re-run). Otherwise the command ends with exit 0, `released=false` and the later steps skipped. |
-| `binaries` | `.goreleaser.yaml` or `.goreleaser.yml` exists | `goreleaser release --clean` at the tag. The pinned cosign is on `PATH`, so a `signs:` block in your GoReleaser config can sign `checksums.txt`. |
+| `binaries` | `.goreleaser.yaml` or `.goreleaser.yml` exists | `goreleaser release --clean` at the tag. The pinned cosign is on `PATH`, so a `signs:` block in your GoReleaser config can sign `checksums.txt`. GoReleaser refuses to release from a dirty tree, so first the step adds `.shipguard/`, `.shipguard-cache/` and `.shipguard-action/` to the repository's `.git/info/exclude` (local, never committed; each line only once). |
 | `image` | the configured Dockerfile exists | Builds, scans, pushes, tags and signs the image (below). |
 
 A step that does not apply is `skipped` with a reason. A failed step marks every later step `not run`.
@@ -39,6 +39,8 @@ Before anything is pushed (after the scan gate, so a blocked image is still repo
 3. If `<name>:vX.Y.Z` already exists with the same digest, the push is skipped (a re-run). Attestations carry build timestamps, so a rebuild of the same source has a new index digest; when its platform images are the same as the published ones it counts as the published release: nothing is pushed and the published digest is signed. Any other difference is an error: a published tag is never moved.
 4. `crane push` of the layout, then `crane tag` for the other tags.
 5. `cosign sign --yes <name>@<digest>` (keyless).
+
+The pinned tools and the trivy cache live outside the repository, in `$RUNNER_TEMP/shipguard-cache` (else the user cache directory, `shipguard` inside it), so they are never in the build context. shipguard's own output is not: when your Dockerfile copies the whole context (`COPY . .`), add `dist/` (GoReleaser output) and `.shipguard/` to `.dockerignore`.
 
 Registries without the OCI referrers API (such as `registry:2`) show an extra `sha256-<digest>` tag next to the release tags; crane (attestations) and cosign (signature) create it.
 
@@ -111,9 +113,20 @@ jobs:
 
 See [GitHub](github.md#releases) for the inputs and outputs.
 
+Call the workflow only from trusted refs: a push to the default branch, a tag, or `workflow_dispatch`. Never call it from `pull_request_target` or from a ref a contributor controls: `GITHUB_TOKEN` and the OIDC token are visible to GoReleaser hooks and to anything the build runs, so code from an untrusted ref could publish or sign as you. Use `dry-run: true` for checks on pull requests from your own branches.
+
+A caller that pins the workflow by commit SHA builds shipguard from source; pinning `@vX.Y.Z` installs the signed release binary instead.
+
 ## Re-running a release
 
-A re-run after a failed build finishes the release without creating a second tag: the version step reuses the tag at `HEAD`, the binaries step runs again, and an image already pushed with the same digest is not pushed again.
+A re-run after a failed build finishes the release without creating a second tag: the version step reuses the tag at `HEAD` (with several release tags at `HEAD`, the highest stable one, else the highest prerelease), the binaries step runs again, and an image already pushed with the same digest is not pushed again. An image that was pushed but not signed is signed by the re-run.
+
+The binaries step uploads again only when GoReleaser may replace the assets of the existing GitHub release. Set this in `.goreleaser.yaml`, otherwise a re-run after a partial upload fails on the existing assets:
+
+```yaml
+release:
+  replace_existing_artifacts: true
+```
 
 ## Verify a release
 

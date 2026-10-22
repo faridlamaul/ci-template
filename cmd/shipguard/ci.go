@@ -40,19 +40,19 @@ var ciToolResolver = func(dir string) (func(context.Context, string) (string, er
 // tools are Linux binaries: elsewhere fetching one is an error (steps with a
 // custom run command fetch nothing and still work).
 func newToolResolver(dir, goos, goarch string) (func(context.Context, string) (string, error), map[string]string, error) {
-	return newToolResolverMsg(dir, goos, goarch, func(goos, goarch string) string {
+	return newToolResolverMsg(filepath.Join(dir, ".shipguard-cache", "tools"), goos, goarch, func(goos, goarch string) string {
 		return fmt.Sprintf("pinned tools are only available on linux (running on %s/%s); run in a Linux CI image or set ci.steps.<step>.run", goos, goarch)
 	})
 }
 
-// newToolResolverMsg is newToolResolver with the non-linux error text supplied
-// by the caller.
-func newToolResolverMsg(dir, goos, goarch string, nonLinux func(goos, goarch string) string) (func(context.Context, string) (string, error), map[string]string, error) {
+// newToolResolverMsg is newToolResolver with the tool cache directory and the
+// non-linux error text supplied by the caller.
+func newToolResolverMsg(toolsDir, goos, goarch string, nonLinux func(goos, goarch string) string) (func(context.Context, string) (string, error), map[string]string, error) {
 	specs, defaults, err := tools.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load tools: %w", err)
 	}
-	cache := &tools.Cache{Dir: filepath.Join(dir, ".shipguard-cache", "tools"), Arch: goarch}
+	cache := &tools.Cache{Dir: toolsDir, Arch: goarch}
 	return func(ctx context.Context, name string) (string, error) {
 		if goos != "linux" {
 			return "", errors.New(nonLinux(goos, goarch))

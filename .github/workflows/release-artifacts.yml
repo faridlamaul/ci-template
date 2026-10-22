@@ -97,8 +97,8 @@ jobs:
             echo "::error::steps may only contain lowercase letters and spaces"
             exit 2
           fi
-          if ! [[ "$INPUT_PRERELEASE" =~ ^[A-Za-z0-9]*$ ]]; then
-            echo "::error::prerelease may only contain letters and digits"
+          if ! [[ "$INPUT_PRERELEASE" =~ ^[0-9A-Za-z-]*$ ]]; then
+            echo "::error::prerelease may only contain letters, digits and hyphens"
             exit 2
           fi
 
@@ -206,6 +206,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/shipguard-bin"
           go build -o "$RUNNER_TEMP/shipguard-bin/shipguard" ./cmd/shipguard
           echo "$RUNNER_TEMP/shipguard-bin" >> "$GITHUB_PATH"
+
+      # The source checkout is only needed for the build; remove it so it is
+      # never in the caller's docker build context or working-tree status.
+      - name: Remove shipguard source
+        if: ${{ steps.ref.outputs.version == '' }}
+        run: rm -rf "$GITHUB_WORKSPACE/.shipguard-action"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
