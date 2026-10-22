@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <strong>Security scanning and a policy gate for your CI pipeline.</strong><br>
+  <strong>Security scanning, build and test, and releases for your CI pipeline.</strong><br>
   One image for GitHub, GitLab and Bitbucket.
 </p>
 
@@ -22,7 +22,7 @@
   <img alt="shipguard scanning a vulnerable Python project and blocking the gate" src="docs/assets/demo.gif" width="800">
 </p>
 
-Security scanning and a policy gate for your CI pipeline, on **GitHub**, **GitLab** and **Bitbucket**.
+Security scanning with a policy gate (`shipguard scan`), build and test (`shipguard ci`) and releases with a scanned, signed image (`shipguard release`) for your CI pipeline, on **GitHub**, **GitLab** and **Bitbucket**.
 
 shipguard runs four kinds of scan in one container image, applies one policy file to the results, and reports them to the platform you already use:
 
@@ -40,6 +40,7 @@ On a pull request only the findings the PR introduces can fail the gate. On the 
 | Part | State |
 |---|---|
 | Go CLI (`scan`, `gate`, `report`, `run`) | done |
+| `shipguard release`: version, binaries and a scanned, signed image, see [docs/release.md](docs/release.md) | CLI done |
 | `shipguard ci`: lint, test and build for Go, Node, Python, Ruby and Rust on GitHub, GitLab and Bitbucket | done, see [docs/ci.md](docs/ci.md) |
 | GitHub adapter (reusable workflow and composite action) | done |
 | GitLab component (CI/CD Catalog) | released |
@@ -115,6 +116,7 @@ GitLab and Bitbucket snippets, the defaults per language, the `ci:` config, outp
 | Page | Contents |
 |---|---|
 | [docs/ci.md](docs/ci.md) | `shipguard ci`: usage per platform, defaults per language, `ci:` config, outputs, exit codes, security |
+| [docs/release.md](docs/release.md) | `shipguard release`: steps, `release:` config, dry run, outputs, exit codes, verifying releases |
 | [docs/configuration.md](docs/configuration.md) | Every `.shipguard.yaml` key, defaults, exceptions, PR policy, ignored scanner config, exit codes, environment variables |
 | [docs/github.md](docs/github.md) | Inputs, permissions, hardening, tier notes |
 | [docs/gitlab.md](docs/gitlab.md) | Component inputs, `include: remote` with integrity, hardening |

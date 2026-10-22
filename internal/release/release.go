@@ -66,6 +66,7 @@ type Result struct {
 	ImageDigest string
 	Steps       []StepResult
 	Findings    []finding.Finding // image findings; never fed to SARIF reporters
+	Blocking    []finding.Finding // the findings that block the image gate
 
 	usageErr error // config problem found inside a step; Run returns it (exit 2)
 }

@@ -159,6 +159,7 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 	}
 	r.Findings = findings
 	d := policy.Evaluate(finding.Result{Findings: findings}, o.Config, false, time.Now())
+	r.Blocking = d.Blocking
 	if d.ExitCode() != 0 {
 		for _, f := range d.Blocking {
 			_, _ = fmt.Fprintf(o.Out, "%s  %s  %s\n", strings.ToUpper(f.Severity.String()), f.ID, f.File)

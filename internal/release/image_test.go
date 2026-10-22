@@ -208,7 +208,7 @@ func TestImageBlocked(t *testing.T) {
 	r := Result{Released: true, Tag: "v1.4.0", Version: "1.4.0"}
 	s := image(context.Background(), o, &r)
 	r.Steps = []StepResult{s}
-	if s.Status != "blocked" || r.ExitCode() != 1 || len(r.Findings) == 0 {
+	if s.Status != "blocked" || r.ExitCode() != 1 || len(r.Findings) == 0 || len(r.Blocking) == 0 {
 		t.Fatalf("s=%+v findings=%d", s, len(r.Findings))
 	}
 	if len(f.all("crane")) != 0 || len(f.all("cosign")) != 0 {
