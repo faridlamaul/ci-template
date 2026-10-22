@@ -32,11 +32,15 @@ A step that does not apply is `skipped` with a reason. A failed step marks every
 
 ### Image
 
+Before anything is pushed (after the scan gate, so a blocked image is still reported) the step checks that signing can work: `SIGSTORE_ID_TOKEN` is set, or the GitHub OIDC endpoint is available (`id-token: write` on the job). Without either it fails with "nothing was pushed", instead of publishing an unsigned image or waiting for a browser sign-in. A dry run needs no identity.
+
 1. `docker buildx build` for each configured platform with BuildKit SBOM and max-mode provenance, to a local OCI layout. `VERSION` is always passed as a build argument (`X.Y.Z`). A missing buildx builder is an error that names `docker/setup-buildx-action`.
 2. `trivy image` scans each platform. Vulnerabilities become SCA findings and the existing `policy.fail_on.sca` threshold and `exceptions` decide. A block prints the findings, writes `image-findings.json`, exits 1 and pushes nothing.
-3. If `<name>:vX.Y.Z` already exists with the same digest, the push is skipped (a re-run). With a different digest it is an error: a published tag is never moved.
+3. If `<name>:vX.Y.Z` already exists with the same digest, the push is skipped (a re-run). Attestations carry build timestamps, so a rebuild of the same source has a new index digest; when its platform images are the same as the published ones it counts as the published release: nothing is pushed and the published digest is signed. Any other difference is an error: a published tag is never moved.
 4. `crane push` of the layout, then `crane tag` for the other tags.
 5. `cosign sign --yes <name>@<digest>` (keyless).
+
+Registries without the OCI referrers API (such as `registry:2`) show an extra `sha256-<digest>` tag next to the release tags; crane (attestations) and cosign (signature) create it.
 
 Tags: `vX.Y.Z`, `X.Y.Z`, `vX.Y` and `vX`. A prerelease (a version containing `-`) gets only `vX.Y.Z` and `X.Y.Z`. There is no `latest`, `sha-` or branch tag.
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -65,6 +66,37 @@ func layoutDigest(layout string) (string, error) {
 	return idx.Manifests[0].Digest, nil
 }
 
+// imageDigests returns the sorted digests of the platform images listed in an
+// image index, without the attestation manifests. It is nil for anything else.
+func imageDigests(index []byte) []string {
+	var idx struct {
+		Manifests []struct {
+			Digest      string            `json:"digest"`
+			Annotations map[string]string `json:"annotations"`
+		} `json:"manifests"`
+	}
+	if json.Unmarshal(index, &idx) != nil {
+		return nil
+	}
+	var out []string
+	for _, m := range idx.Manifests {
+		if m.Annotations["vnd.docker.reference.type"] != "attestation-manifest" {
+			out = append(out, m.Digest)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// layoutImageDigests is imageDigests for the index blob that digest names in the layout.
+func layoutImageDigests(layout, digest string) []string {
+	data, err := os.ReadFile(filepath.Join(layout, "blobs", "sha256", strings.TrimPrefix(digest, "sha256:")))
+	if err != nil {
+		return nil
+	}
+	return imageDigests(data)
+}
+
 // tagAbsent reports whether crane's error says the manifest or repository does not exist.
 func tagAbsent(msg string) bool { return absentRe.MatchString(msg) }
 
@@ -77,6 +109,16 @@ func oneLine(s string, n int) string {
 		s = s[:n]
 	}
 	return s
+}
+
+// hasOIDC reports whether cosign can sign without an interactive sign-in: an
+// explicit token, or the GitHub Actions OIDC endpoint. Without either it waits
+// five minutes for a browser, after the image is already pushed.
+func hasOIDC(getenv func(string) string) bool {
+	if getenv("SIGSTORE_ID_TOKEN") != "" {
+		return true
+	}
+	return getenv("ACTIONS_ID_TOKEN_REQUEST_URL") != "" && getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") != ""
 }
 
 func image(ctx context.Context, o Options, r *Result) StepResult {
@@ -170,6 +212,11 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 		return StepResult{Status: "passed", Reason: "dry run"}
 	}
 
+	// After the gate, so a blocked image is reported even without an identity.
+	if !hasOIDC(o.Getenv) {
+		return fail("signing needs an OIDC identity: grant `id-token: write` (GitHub) or set SIGSTORE_ID_TOKEN; nothing was pushed")
+	}
+
 	tags := imageTags(r.Version)
 	ref := name + ":" + tags[0]
 	var digestLog bytes.Buffer // crane prints the registry error on stderr
@@ -191,7 +238,20 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 			return fail("pushed digest does not match the scanned layout (%s != %s)", m[1], digest)
 		}
 	case strings.TrimSpace(string(pub)) != digest:
-		return fail("%s is already published with a different digest (%s); a published tag is never moved", ref, strings.TrimSpace(string(pub)))
+		// The attestations carry build timestamps, so a rebuild of the same source has a
+		// new index digest. It is the same release when the platform images are the same.
+		published := strings.TrimSpace(string(pub))
+		var manifestLog bytes.Buffer
+		manifest, merr := o.Exec.Run(ctx, o.Dir, nil, &manifestLog, crane, "manifest", name+"@"+published)
+		if merr != nil {
+			return fail("%s is already published with a different digest (%s) and its manifest cannot be read: %v: %s", ref, published, merr, oneLine(manifestLog.String(), 300))
+		}
+		built, was := layoutImageDigests(layout, digest), imageDigests(manifest)
+		if len(built) == 0 || !slices.Equal(built, was) {
+			return fail("%s is already published with a different digest (%s); a published tag is never moved", ref, published)
+		}
+		_, _ = fmt.Fprintf(o.Out, "%s is already published with the same images; keeping %s\n", ref, published)
+		digest = published // sign what is published
 	}
 	for _, t := range tags[1:] {
 		if _, err := o.Exec.Run(ctx, o.Dir, nil, o.Out, crane, "tag", ref, t); err != nil {

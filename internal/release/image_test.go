@@ -25,6 +25,8 @@ type imgExec struct {
 	digestErr   string // text of the crane digest failure; default MANIFEST_UNKNOWN
 	layouts     []string
 	pushOut     string
+	layoutIndex string // contents of the layout's top index blob; "" = a single manifest, no blob
+	pubManifest string // output of crane manifest; "" = the command fails
 }
 
 func (f *imgExec) Run(_ context.Context, _ string, env []string, _ io.Writer, name string, args ...string) ([]byte, error) {
@@ -41,6 +43,11 @@ func (f *imgExec) Run(_ context.Context, _ string, env []string, _ io.Writer, na
 				_ = os.MkdirAll(dest, 0o700)
 				idx := `{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.index.v1+json","digest":"` + fakeLayoutDigest + `","size":1}]}`
 				_ = os.WriteFile(filepath.Join(dest, "index.json"), []byte(idx), 0o600)
+				if f.layoutIndex != "" {
+					blobs := filepath.Join(dest, "blobs", "sha256")
+					_ = os.MkdirAll(blobs, 0o700)
+					_ = os.WriteFile(filepath.Join(blobs, strings.TrimPrefix(fakeLayoutDigest, "sha256:")), []byte(f.layoutIndex), 0o600)
+				}
 			}
 		}
 	case "trivy":
@@ -56,6 +63,11 @@ func (f *imgExec) Run(_ context.Context, _ string, env []string, _ io.Writer, na
 				return nil, errors.New(msg)
 			}
 			return []byte(f.craneDigest + "\n"), nil
+		case "manifest":
+			if f.pubManifest == "" {
+				return nil, errors.New("manifest unavailable")
+			}
+			return []byte(f.pubManifest), nil
 		case "push":
 			return []byte(f.pushOut), nil
 		}
@@ -89,11 +101,16 @@ func imgOpts(t *testing.T, f *imgExec) Options {
 	t.Helper()
 	o := opts(t, nil)
 	o.Exec = f
+	o.Getenv = oidcEnv(map[string]string{"SIGSTORE_ID_TOKEN": "token"})
 	o.Config.Release.Image.Name = "ghcr.io/o/app"
 	if err := os.WriteFile(filepath.Join(o.Dir, "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return o
+}
+
+func oidcEnv(m map[string]string) func(string) string {
+	return func(k string) string { return m[k] }
 }
 
 func cleanTrivy() []byte { return []byte(`{"Results":[]}`) }
@@ -128,12 +145,7 @@ func TestImageDefaultName(t *testing.T) {
 	f := &imgExec{trivyOut: cleanTrivy(), pushOut: "x@" + fakeLayoutDigest}
 	o := imgOpts(t, f)
 	o.Config.Release.Image.Name = ""
-	o.Getenv = func(k string) string {
-		if k == "GITHUB_REPOSITORY" {
-			return "FaridLamaul/My-App"
-		}
-		return ""
-	}
+	o.Getenv = oidcEnv(map[string]string{"SIGSTORE_ID_TOKEN": "token", "GITHUB_REPOSITORY": "FaridLamaul/My-App"})
 	r, s, err := runImage(t, o, "1.4.0")
 	if err != nil || s.Status != "passed" || r.Image != "ghcr.io/faridlamaul/my-app" {
 		t.Fatalf("err=%v s=%+v image=%q", err, s, r.Image)
@@ -291,12 +303,63 @@ func TestImageRerunDifferentDigest(t *testing.T) {
 		t.Fatalf("s=%+v", s)
 	}
 	for _, c := range f.all("crane") {
-		if c.args[0] != "digest" {
+		if c.args[0] != "digest" && c.args[0] != "manifest" {
 			t.Fatalf("unexpected crane %v", c.args)
 		}
 	}
 	if len(f.all("cosign")) != 0 {
 		t.Fatal("no sign")
+	}
+}
+
+// indexOf builds an image index with the given platform image digests and attestation digests.
+func indexOf(images, attestations []string) string {
+	var ms []string
+	for _, d := range images {
+		ms = append(ms, `{"digest":"`+d+`","platform":{"os":"linux","architecture":"amd64"}}`)
+	}
+	for _, d := range attestations {
+		ms = append(ms, `{"digest":"`+d+`","annotations":{"vnd.docker.reference.type":"attestation-manifest"}}`)
+	}
+	return `{"schemaVersion":2,"manifests":[` + strings.Join(ms, ",") + `]}`
+}
+
+const (
+	imgA  = "sha256:aaaa"
+	imgB  = "sha256:bbbb"
+	attO  = "sha256:0001"
+	attN  = "sha256:0002"
+	pubIx = "sha256:2222"
+)
+
+// A rebuild of the same source has the same images but new attestations
+// (they carry timestamps), so the index digest differs from the published one.
+func TestImageRerunSameImagesNewAttestations(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubIx,
+		layoutIndex: indexOf([]string{imgA}, []string{attN}), pubManifest: indexOf([]string{imgA}, []string{attO})}
+	r, s, err := runImage(t, imgOpts(t, f), "1.4.0")
+	if err != nil || s.Status != "passed" || r.ImageDigest != pubIx {
+		t.Fatalf("err=%v s=%+v r=%+v", err, s, r)
+	}
+	for _, c := range f.all("crane") {
+		if c.args[0] == "push" {
+			t.Fatal("push must be skipped")
+		}
+	}
+	if got := strings.Join(f.all("crane")[1].args, " "); got != "manifest ghcr.io/o/app@"+pubIx {
+		t.Errorf("manifest = %q", got)
+	}
+	if got := strings.Join(f.all("cosign")[0].args, " "); got != "sign --yes ghcr.io/o/app@"+pubIx {
+		t.Errorf("must sign the published digest, got %q", got)
+	}
+}
+
+func TestImageRerunDifferentImages(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubIx,
+		layoutIndex: indexOf([]string{imgB}, []string{attN}), pubManifest: indexOf([]string{imgA}, []string{attO})}
+	_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
+	if s.Status != "failed" || !strings.Contains(s.Reason, "already published") || len(f.all("cosign")) != 0 {
+		t.Fatalf("s=%+v", s)
 	}
 }
 
@@ -390,6 +453,114 @@ func TestImagePushedDigestMismatch(t *testing.T) {
 	f := &imgExec{trivyOut: cleanTrivy(), pushOut: "x@sha256:abc"}
 	_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
 	if s.Status != "failed" || !strings.Contains(s.Reason, "pushed digest does not match the scanned layout") || len(f.all("cosign")) != 0 {
+		t.Fatalf("s=%+v", s)
+	}
+}
+
+func TestImageNeedsOIDCBeforePush(t *testing.T) {
+	for _, env := range []map[string]string{
+		{},
+		{"ACTIONS_ID_TOKEN_REQUEST_URL": "https://x"},
+		{"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "t"},
+	} {
+		f := &imgExec{trivyOut: cleanTrivy(), pushOut: "x@" + fakeLayoutDigest}
+		o := imgOpts(t, f)
+		o.Getenv = oidcEnv(env)
+		_, s, _ := runImage(t, o, "1.4.0")
+		if s.Status != "failed" || !strings.Contains(s.Reason, "signing needs an OIDC identity") || !strings.Contains(s.Reason, "nothing was pushed") {
+			t.Fatalf("env=%v s=%+v", env, s)
+		}
+		if len(f.all("docker")) == 0 || len(f.all("trivy")) == 0 {
+			t.Fatalf("env=%v: build and scan must run first: %v", env, f.names())
+		}
+		if len(f.all("crane")) != 0 || len(f.all("cosign")) != 0 {
+			t.Fatalf("env=%v: calls = %v, want no crane or cosign", env, f.names())
+		}
+	}
+}
+
+// A blocked image is reported as blocked even without an identity.
+func TestImageBlockedWithoutOIDC(t *testing.T) {
+	raw, err := os.ReadFile("../scanner/testdata/trivy-image.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &imgExec{trivyOut: raw}
+	o := imgOpts(t, f)
+	o.Getenv = oidcEnv(nil)
+	o.Config.Policy.FailOn[finding.CategorySCA] = policy.Threshold{Severity: finding.High}
+	_, s, _ := runImage(t, o, "1.4.0")
+	if s.Status != "blocked" || len(f.all("crane")) != 0 {
+		t.Fatalf("s=%+v calls=%v", s, f.names())
+	}
+}
+
+func TestImageOIDCSources(t *testing.T) {
+	for _, env := range []map[string]string{
+		{"SIGSTORE_ID_TOKEN": "t"},
+		{"ACTIONS_ID_TOKEN_REQUEST_URL": "https://x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "t"},
+	} {
+		f := &imgExec{trivyOut: cleanTrivy(), pushOut: "x@" + fakeLayoutDigest}
+		o := imgOpts(t, f)
+		o.Getenv = oidcEnv(env)
+		if _, s, _ := runImage(t, o, "1.4.0"); s.Status != "passed" {
+			t.Fatalf("env=%v s=%+v", env, s)
+		}
+	}
+}
+
+func TestImageDryRunNeedsNoOIDC(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy()}
+	o := imgOpts(t, f)
+	o.DryRun = true
+	o.Getenv = oidcEnv(nil)
+	if _, s, _ := runImage(t, o, dryRunVersion); s.Status != "passed" {
+		t.Fatalf("s=%+v", s)
+	}
+}
+
+// The re-run comparison fails closed on anything but the same platform images.
+func TestImageRerunComparison(t *testing.T) {
+	two := `{"manifests":[{"digest":"` + imgA + `","platform":{"os":"linux","architecture":"amd64"}},{"digest":"` + imgB + `","platform":{"os":"linux","architecture":"arm64"}}]}`
+	noAnnotation := `{"manifests":[{"digest":"` + imgA + `"},{"digest":"` + attO + `"}]}`
+	tests := []struct {
+		name      string
+		layout    string
+		published string
+		skip      bool
+	}{
+		{"same images, new attestations", indexOf([]string{imgA}, []string{attN}), indexOf([]string{imgA}, []string{attO}), true},
+		{"platform added", two, indexOf([]string{imgA}, []string{attO}), false},
+		{"platform removed", indexOf([]string{imgA}, []string{attN}), two, false},
+		{"published single image", indexOf([]string{imgA}, []string{attN}), `{"schemaVersion":2,"config":{"digest":"` + imgA + `"}}`, false},
+		{"published attestation without annotation", indexOf([]string{imgA}, []string{attN}), noAnnotation, false},
+		{"built attestation without annotation", noAnnotation, indexOf([]string{imgA}, []string{attO}), false},
+		{"layout is a single image", "", indexOf([]string{imgA}, []string{attO}), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubIx, layoutIndex: tc.layout, pubManifest: tc.published}
+			_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
+			signed := len(f.all("cosign")) == 1
+			if tc.skip && (s.Status != "passed" || !signed) {
+				t.Fatalf("want skip and sign: s=%+v", s)
+			}
+			if !tc.skip && (s.Status != "failed" || !strings.Contains(s.Reason, "already published") || signed) {
+				t.Fatalf("want fail closed: s=%+v", s)
+			}
+			for _, c := range f.all("crane") {
+				if c.args[0] == "push" || c.args[0] == "tag" && !tc.skip {
+					t.Fatalf("unexpected crane %v", c.args)
+				}
+			}
+		})
+	}
+}
+
+func TestImageRerunManifestErrorInReason(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubIx, layoutIndex: indexOf([]string{imgA}, nil)}
+	_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
+	if s.Status != "failed" || !strings.Contains(s.Reason, "cannot be read") || !strings.Contains(s.Reason, "manifest unavailable") {
 		t.Fatalf("s=%+v", s)
 	}
 }
