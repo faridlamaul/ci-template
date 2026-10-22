@@ -169,6 +169,51 @@
         ]
       }
     },
+    "release": {
+      "description": "shipguard release settings.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "description": "Image repository. Empty means ghcr.io/<GITHUB_REPOSITORY>, lowercased.",
+              "type": "string"
+            },
+            "dockerfile": {
+              "type": "string",
+              "minLength": 1,
+              "default": "Dockerfile"
+            },
+            "context": {
+              "type": "string",
+              "minLength": 1,
+              "default": "."
+            },
+            "platforms": {
+              "type": "array",
+              "minItems": 1,
+              "default": [
+                "linux/amd64",
+                "linux/arm64"
+              ],
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$"
+              }
+            },
+            "build_args": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
     "ci": {
       "description": "shipguard ci settings. Read from the PR head, not the base.",
       "type": "object",

@@ -133,6 +133,7 @@ func newRoot(getenv func(string) string, stdout, stderr io.Writer) (*cobra.Comma
 		reportCmd(g, getenv, stderr),
 		runCmd(g, getenv, stdout, stderr),
 		ciCmd(g, getenv, stdout, stderr),
+		releaseCmd(g, getenv, stdout, stderr),
 		versionCmd(stdout),
 	)
 	return root, g

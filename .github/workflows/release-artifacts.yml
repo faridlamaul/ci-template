@@ -1,0 +1,283 @@
+name: Reusable shipguard release
+
+# Versions the repository with shiptag, then builds and publishes its binaries
+# (GoReleaser) and its container image to ghcr.io (scanned, pushed, signed).
+# The caller grants contents: write, packages: write, id-token: write and
+# attestations: write. See docs/release.md.
+on:
+  workflow_call:
+    inputs:
+      dir:
+        description: "Project directory, relative to the workspace"
+        type: string
+        default: .
+        required: false
+      steps:
+        description: "Space-separated steps to run (version, binaries, image); empty runs all"
+        type: string
+        default: ""
+        required: false
+      config:
+        description: "Path to the shipguard config file, relative to dir"
+        type: string
+        default: .shipguard.yaml
+        required: false
+      prerelease:
+        description: "Prerelease identifier (for example rc); empty for a stable release"
+        type: string
+        default: ""
+        required: false
+      dry-run:
+        description: "Preview: nothing is tagged, pushed or signed"
+        type: boolean
+        default: false
+        required: false
+      shipguard-version:
+        description: "shipguard release to install (vX.Y.Z); empty builds from the workflow source"
+        type: string
+        default: ""
+        required: false
+      attest:
+        description: "Create GitHub artifact attestations. GitHub refuses them for private repositories owned by a user account; set false there"
+        type: boolean
+        default: true
+        required: false
+      runs-on:
+        description: "Runner label"
+        type: string
+        default: ubuntu-latest
+        required: false
+    outputs:
+      released:
+        description: "true when a release was created"
+        value: ${{ jobs.release.outputs.released }}
+      tag:
+        description: "The release tag"
+        value: ${{ jobs.release.outputs.tag }}
+      version:
+        description: "The release version (without v)"
+        value: ${{ jobs.release.outputs.version }}
+      image:
+        description: "The published image name"
+        value: ${{ jobs.release.outputs.image }}
+      image_digest:
+        description: "The published image digest"
+        value: ${{ jobs.release.outputs.image_digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: shipguard release
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      image: ${{ steps.release.outputs.image }}
+      image_digest: ${{ steps.release.outputs.image_digest }}
+    steps:
+      - name: Validate inputs
+        env:
+          INPUT_STEPS: ${{ inputs.steps }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          for word in $INPUT_STEPS; do
+            case "$word" in
+              version | binaries | image) ;;
+              *)
+                echo "::error::steps may only contain version, binaries and image"
+                exit 2
+                ;;
+            esac
+          done
+          if ! [[ "$INPUT_STEPS" =~ ^[a-z\ ]*$ ]]; then
+            echo "::error::steps may only contain lowercase letters and spaces"
+            exit 2
+          fi
+          if ! [[ "$INPUT_PRERELEASE" =~ ^[0-9A-Za-z-]*$ ]]; then
+            echo "::error::prerelease may only contain letters, digits and hyphens"
+            exit 2
+          fi
+
+      # Full history and tags: shiptag reads the commits since the last tag.
+      - name: Check out caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # job.workflow_ref describes this workflow; callers pinned to a release
+      # tag get the signed release binary instead of a source build.
+      - name: Resolve shipguard release
+        id: ref
+        env:
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          INPUT_VERSION: ${{ inputs.shipguard-version }}
+        run: |
+          version="$INPUT_VERSION"
+          if [ -z "$version" ] && [[ "$WORKFLOW_REF" =~ @refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          fi
+          if [ -n "$version" ] && ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::shipguard-version must look like v1.2.3"
+            exit 2
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # job.workflow_sha is this workflow's commit; uses: cannot take expressions.
+      # Sparse: only what a source build needs, so the caller's linters never
+      # see shipguard's own fixtures or rules inside the workspace.
+      - name: Check out shipguard source
+        if: ${{ steps.ref.outputs.version == '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: faridlamaul/shipguard
+          ref: ${{ job.workflow_sha }}
+          path: .shipguard-action
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /cmd/
+            /internal/
+            !/internal/**/testdata/
+            /go.mod
+            /go.sum
+
+      - name: Check the sparse checkout excluded fixtures
+        if: ${{ steps.ref.outputs.version == '' }}
+        run: |
+          for d in testdata rules; do
+            if [ -e ".shipguard-action/$d" ]; then
+              echo "::error::.shipguard-action/$d must not be checked out"
+              exit 1
+            fi
+          done
+
+      - name: Install cosign
+        if: ${{ steps.ref.outputs.version != '' }}
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Install shipguard release
+        if: ${{ steps.ref.outputs.version != '' }}
+        env:
+          RELEASE: ${{ steps.ref.outputs.version }}
+        run: |  # zizmor: ignore[github-env] -- fixed runner-temp dir, verified binary
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64 | arm64) arch=arm64 ;;
+            *) echo "::error::unsupported architecture $(uname -m)"; exit 2 ;;
+          esac
+          tmp="$(mktemp -d)"
+          base="https://github.com/faridlamaul/shipguard/releases/download/${RELEASE}"
+          archive="shipguard_${RELEASE#v}_linux_${arch}.tar.gz"
+          cd "$tmp"
+          for f in "$archive" checksums.txt checksums.txt.sigstore.json; do
+            curl --fail --silent --show-error --location --retry 3 --proto '=https' -o "$f" "$base/$f"
+          done
+          cosign verify-blob \
+            --bundle checksums.txt.sigstore.json \
+            --certificate-identity https://github.com/faridlamaul/shipguard/.github/workflows/release.yml@refs/heads/main \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            checksums.txt
+          grep -E "^[0-9a-f]{64}  ${archive//./\\.}\$" checksums.txt > archive.sha256 || true
+          if [ "$(wc -l < archive.sha256)" -ne 1 ]; then
+            echo "::error::checksums.txt must contain exactly one entry for ${archive}"
+            exit 2
+          fi
+          sha256sum -c archive.sha256
+          mkdir -p "$RUNNER_TEMP/shipguard-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/shipguard-bin" shipguard
+          echo "$RUNNER_TEMP/shipguard-bin" >> "$GITHUB_PATH"
+
+      - name: Set up Go to build shipguard
+        if: ${{ steps.ref.outputs.version == '' }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .shipguard-action/go.mod
+          cache: false
+
+      - name: Build shipguard from source
+        if: ${{ steps.ref.outputs.version == '' }}
+        working-directory: .shipguard-action
+        run: |  # zizmor: ignore[github-env] -- fixed runner-temp dir, verified binary
+          mkdir -p "$RUNNER_TEMP/shipguard-bin"
+          go build -o "$RUNNER_TEMP/shipguard-bin/shipguard" ./cmd/shipguard
+          echo "$RUNNER_TEMP/shipguard-bin" >> "$GITHUB_PATH"
+
+      # The source checkout is only needed for the build; remove it so it is
+      # never in the caller's docker build context or working-tree status.
+      - name: Remove shipguard source
+        if: ${{ steps.ref.outputs.version == '' }}
+        run: rm -rf "$GITHUB_WORKSPACE/.shipguard-action"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The CLI never handles registry tokens: crane and cosign read the docker
+      # config written here.
+      - name: Log in to GitHub Container Registry
+        if: ${{ !inputs.dry-run && (inputs.steps == '' || contains(inputs.steps, 'image')) }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Run shipguard release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SHIPGUARD_DIR: ${{ inputs.dir }}
+          SHIPGUARD_CONFIG: ${{ inputs.config }}
+          SHIPGUARD_PRERELEASE: ${{ inputs.prerelease }}
+          SHIPGUARD_DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
+          INPUT_STEPS: ${{ inputs.steps }}
+        run: |
+          # Word splitting is intended: steps is validated to version, binaries and image.
+          # shellcheck disable=SC2086
+          shipguard release $INPUT_STEPS
+
+      - name: Upload results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shipguard-release
+          path: ${{ inputs.dir }}/.shipguard/release/
+          if-no-files-found: ignore
+
+      - name: Attest the image
+        if: ${{ inputs.attest && !inputs.dry-run && steps.release.outputs.image_digest != '' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.release.outputs.image }}
+          subject-digest: ${{ steps.release.outputs.image_digest }}
+          push-to-registry: true
+
+      - name: Check for binary checksums
+        id: checksums
+        if: ${{ !inputs.dry-run }}
+        env:
+          CHECKSUMS: ${{ inputs.dir }}/dist/checksums.txt
+        run: |
+          if [ -f "$CHECKSUMS" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attest the binaries
+        if: ${{ inputs.attest && !inputs.dry-run && steps.checksums.outputs.found == 'true' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ inputs.dir }}/dist/checksums.txt

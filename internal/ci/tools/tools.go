@@ -31,7 +31,7 @@ import (
 var embedded string
 
 // toolKeys lists the env-file prefixes of the pinned tools.
-var toolKeys = []string{"GOLANGCI_LINT", "GOTESTSUM", "RUFF", "UV", "CARGO_NEXTEST", "BUN"}
+var toolKeys = []string{"GOLANGCI_LINT", "GOTESTSUM", "RUFF", "UV", "CARGO_NEXTEST", "BUN", "SHIPTAG", "GORELEASER", "CRANE", "COSIGN", "TRIVY"}
 
 // defaultKeys lists the language defaults every pin file must carry.
 var defaultKeys = []string{"NODE_DEFAULT", "PYTHON_DEFAULTS", "RUBY_DEFAULT", "RUST_DEFAULT", "PYTEST_VERSION", "COVERAGE_VERSION", "POETRY_VERSION", "COREPACK_VERSION"}

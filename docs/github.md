@@ -84,6 +84,27 @@ jobs:
 
 The offline database path must be inside the workspace, which is the only directory mounted into the container.
 
+## Releases
+
+`release-artifacts.yml` versions the repository, publishes its binaries and its container image, and attests them. Call it from a workflow on your default branch:
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    uses: faridlamaul/shipguard/.github/workflows/release-artifacts.yml@vX.Y.Z
+    permissions: { contents: write, packages: write, id-token: write, attestations: write }
+```
+
+Inputs: `steps`, `dir`, `config`, `prerelease`, `dry-run`, `shipguard-version`, `attest` and `runs-on`. Outputs: `released`, `tag`, `version`, `image` and `image_digest`. `attest` (default `true`) creates GitHub artifact attestations; GitHub refuses them for private repositories owned by a user account, so set `attest: false` there. See [shipguard release](release.md) for the steps, how to verify what it publishes, the image gate and the configuration.
+
+Call it only from trusted refs (a push to the default branch, a tag, `workflow_dispatch`), never from `pull_request_target` or an untrusted ref: `GITHUB_TOKEN` and the OIDC token are visible to GoReleaser hooks. Pinning `@vX.Y.Z` installs the signed release binary; pinning a commit SHA builds shipguard from source.
+
 ## Policy on pull requests
 
 On a pull request the policy is read from the base branch, and the summary warns when the PR changes `.shipguard.yaml`. Protect that file with CODEOWNERS, and add it in its own PR before you enforce. See [Configuration](configuration.md#pull-requests-the-policy-comes-from-the-base).

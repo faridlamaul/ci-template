@@ -512,3 +512,52 @@ func TestCIPerStepUnitsAgree(t *testing.T) {
 		})
 	}
 }
+
+func TestReleaseDefaults(t *testing.T) {
+	c, err := Parse([]byte("version: 1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := c.Release.Image
+	if img.Dockerfile != "Dockerfile" || img.Context != "." || img.Name != "" {
+		t.Errorf("image = %+v", img)
+	}
+	if want := []string{"linux/amd64", "linux/arm64"}; !reflect.DeepEqual(img.Platforms, want) {
+		t.Errorf("platforms = %v, want %v", img.Platforms, want)
+	}
+}
+
+func TestReleaseUnknownKey(t *testing.T) {
+	_, err := Parse([]byte("release:\n  image:\n    nme: x\n"))
+	if err == nil || !strings.Contains(err.Error(), "nme") {
+		t.Fatalf("err = %v, want error naming nme", err)
+	}
+}
+
+func TestReleaseBadPlatform(t *testing.T) {
+	if _, err := Parse([]byte("release:\n  image:\n    platforms: [amd64]\n")); err == nil {
+		t.Fatal("want error for platform amd64")
+	}
+	c, err := Parse([]byte("release:\n  image:\n    name: ghcr.io/o/r\n    platforms: [linux/arm64/v8]\n    build_args:\n      A: b\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Release.Image.BuildArgs["A"] != "b" {
+		t.Errorf("build_args = %v", c.Release.Image.BuildArgs)
+	}
+}
+
+func TestReleaseSchemaAgrees(t *testing.T) {
+	schema := compile(t, "../../schema/shipguard.schema.json")
+	for in, wantOK := range map[string]bool{
+		"release:\n  image:\n    platforms: [linux/amd64, linux/arm64/v8]\n": true,
+		"release:\n  image:\n    platforms: [amd64]\n":                       false,
+		"release:\n  image:\n    nme: x\n":                                   false,
+		"release:\n  other: 1\n":                                             false,
+	} {
+		perr, serr := validateBoth(t, schema, in)
+		if (perr == nil) != wantOK || (serr == nil) != wantOK {
+			t.Errorf("%q: parser err=%v, schema err=%v, want ok=%v", in, perr, serr, wantOK)
+		}
+	}
+}

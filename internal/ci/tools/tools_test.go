@@ -21,6 +21,27 @@ import (
 
 var hex64 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+func TestLoadReleaseTools(t *testing.T) {
+	tl, _, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"shiptag", "goreleaser", "crane", "cosign", "trivy"} {
+		tool, ok := tl[n]
+		if !ok {
+			t.Fatalf("missing tool %s", n)
+		}
+		for _, a := range []string{"amd64", "arm64"} {
+			if !hex64.MatchString(tool.SHA256[a]) {
+				t.Errorf("%s/%s: bad sha %q", n, a, tool.SHA256[a])
+			}
+			if !strings.HasPrefix(tool.URL[a], "https://") {
+				t.Errorf("%s/%s: bad url %q", n, a, tool.URL[a])
+			}
+		}
+	}
+}
+
 func TestLoadEmbedded(t *testing.T) {
 	tl, defs, err := Load()
 	if err != nil {

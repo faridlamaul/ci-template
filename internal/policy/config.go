@@ -191,9 +191,27 @@ type Config struct {
 	Policy struct {
 		FailOn map[finding.Category]Threshold `yaml:"fail_on"`
 	} `yaml:"policy"`
-	Exceptions []Exception `yaml:"exceptions"`
-	CI         CIConfig    `yaml:"ci"`
+	Exceptions []Exception   `yaml:"exceptions"`
+	CI         CIConfig      `yaml:"ci"`
+	Release    ReleaseConfig `yaml:"release"`
 }
+
+// ReleaseConfig is the `release:` section, read by `shipguard release`.
+type ReleaseConfig struct {
+	Image ImageConfig `yaml:"image"`
+}
+
+// ImageConfig describes the container image `shipguard release` builds.
+type ImageConfig struct {
+	Name       string            `yaml:"name"` // "" = ghcr.io/<GITHUB_REPOSITORY>, lowercased
+	Dockerfile string            `yaml:"dockerfile"`
+	Context    string            `yaml:"context"`
+	Platforms  []string          `yaml:"platforms"`
+	BuildArgs  map[string]string `yaml:"build_args"`
+}
+
+// platformRe is os/arch[/variant], such as linux/amd64 or linux/arm64/v8.
+var platformRe = regexp.MustCompile(`^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$`)
 
 // Defaults returns the built-in configuration.
 func Defaults() Config {
@@ -207,6 +225,9 @@ func Defaults() Config {
 	c.Scanners.IaC.Enabled = true
 	c.Timeouts.PerScanner = 15 * time.Minute
 	c.CI.Timeouts.PerStep = 30 * time.Minute
+	c.Release.Image.Dockerfile = "Dockerfile"
+	c.Release.Image.Context = "."
+	c.Release.Image.Platforms = []string{"linux/amd64", "linux/arm64"}
 	c.Policy.FailOn = map[finding.Category]Threshold{
 		finding.CategorySecrets: {Any: true},
 		finding.CategorySAST:    {Severity: finding.High},
@@ -403,6 +424,18 @@ func (c Config) validate() error {
 	for name, st := range map[string]CIStep{"lint": c.CI.Steps.Lint, "test": c.CI.Steps.Test, "build": c.CI.Steps.Build} {
 		if !st.On() && st.Run != "" {
 			return fmt.Errorf("ci.steps.%s: run has no effect when enabled is false", name)
+		}
+	}
+	img := c.Release.Image
+	if img.Dockerfile == "" || img.Context == "" {
+		return errors.New("release.image.dockerfile and release.image.context must not be empty")
+	}
+	if len(img.Platforms) == 0 {
+		return errors.New("release.image.platforms must not be empty")
+	}
+	for i, p := range img.Platforms {
+		if !platformRe.MatchString(p) {
+			return fmt.Errorf("release.image.platforms[%d]: %q must be os/arch[/variant], such as linux/amd64", i, p)
 		}
 	}
 	for cat := range c.Policy.FailOn {

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="490" height="128" viewBox="0 0 490 128" role="img" aria-label="shipguard">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+  <path d="M64 12L110 28V62C110 86 92 102 64 116C36 102 18 86 18 62V28Z" fill="url(#g)" stroke="url(#g)" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M65 30L87 66H65Z" fill="#fff"/>
+  <path d="M61 40L61 66H43Z" fill="#fff" fill-opacity=".85"/>
+  <path d="M63 28H66V70H63Z" fill="#fff"/>
+  <path d="M63 28L72 31L63 34Z" fill="#FBBF24"/>
+  <path d="M36 72H92L84 88H44Z" fill="#fff"/>
+  <path d="M40 96Q46 91 52 96T64 96T76 96T88 96" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-opacity=".8"/>
+  <text x="140" y="86" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="62" font-weight="700" letter-spacing="-1" fill="#F8FAFC">ship<tspan fill="url(#g)">guard</tspan></text>
+</svg>

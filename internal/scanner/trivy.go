@@ -61,6 +61,14 @@ type trivyReport struct {
 				StartLine int    `json:"StartLine"`
 			} `json:"CauseMetadata"`
 		} `json:"Misconfigurations"`
+		Vulnerabilities []struct {
+			VulnerabilityID  string `json:"VulnerabilityID"`
+			PkgName          string `json:"PkgName"`
+			InstalledVersion string `json:"InstalledVersion"`
+			FixedVersion     string `json:"FixedVersion"`
+			Title            string `json:"Title"`
+			Severity         string `json:"Severity"`
+		} `json:"Vulnerabilities"`
 		Licenses []struct {
 			PkgName  string `json:"PkgName"`
 			FilePath string `json:"FilePath"`

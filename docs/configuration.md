@@ -163,6 +163,29 @@ ci:
       enabled: false
 ```
 
+## Release image (`release`)
+
+The `release` section configures the container image that `shipguard release` builds, scans, pushes and signs. Unknown keys under `release` are config errors (exit 2).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `release.image.name` | string | `""` | Image repository. Empty means `ghcr.io/<GITHUB_REPOSITORY>`, lowercased. |
+| `release.image.dockerfile` | string | `Dockerfile` | Dockerfile path. |
+| `release.image.context` | string | `.` | Build context directory. |
+| `release.image.platforms` | list of strings | `[linux/amd64, linux/arm64]` | Target platforms, each `os/arch[/variant]`. |
+| `release.image.build_args` | map of strings | `{}` | Build arguments passed to the image build. |
+
+```yaml shipguard-config
+release:
+  image:
+    name: ghcr.io/acme/app
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    build_args:
+      GO_VERSION: "1.25"
+```
+
 ## Pull requests: the policy comes from the base
 
 On a pull request or merge request:

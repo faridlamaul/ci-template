@@ -1,0 +1,67 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "python:3.7-alpine",
+  "ArtifactType": "container_image",
+  "Results": [
+    {
+      "Target": "python:3.7-alpine (alpine 3.18.4)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2023-42363",
+          "PkgName": "busybox",
+          "PkgIdentifier": {
+            "PURL": "pkg:apk/alpine/busybox@1.36.1-r2?arch=x86_64&distro=3.18.4",
+            "UID": "b8f9e43c7407bc46"
+          },
+          "InstalledVersion": "1.36.1-r2",
+          "FixedVersion": "1.36.1-r7",
+          "Status": "fixed",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2023-42363",
+          "Title": "busybox: use-after-free in awk",
+          "Severity": "MEDIUM"
+        }
+      ]
+    },
+    {
+      "Target": "Python",
+      "Class": "lang-pkgs",
+      "Type": "python-pkg",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2022-40897",
+          "PkgName": "setuptools",
+          "PkgPath": "usr/local/lib/python3.7/site-packages/setuptools-57.5.0.dist-info/METADATA",
+          "PkgIdentifier": {
+            "PURL": "pkg:pypi/setuptools@57.5.0",
+            "UID": "666d45dbd817a1a2"
+          },
+          "InstalledVersion": "57.5.0",
+          "FixedVersion": "65.5.1",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-40897",
+          "Title": "pypa-setuptools: Regular Expression Denial of Service (ReDoS) in package_index.py",
+          "Severity": "HIGH"
+        },
+        {
+          "VulnerabilityID": "CVE-2023-5752",
+          "PkgName": "pip",
+          "PkgPath": "usr/local/lib/python3.7/site-packages/pip-23.0.1.dist-info/METADATA",
+          "PkgIdentifier": {
+            "PURL": "pkg:pypi/pip@23.0.1",
+            "UID": "6eb58057f81b1f69"
+          },
+          "InstalledVersion": "23.0.1",
+          "Status": "affected",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2023-5752",
+          "Title": "pip: Mercurial configuration injectable in repo revision when installing via pip",
+          "Severity": "UNKNOWN"
+        }
+      ]
+    }
+  ]
+}

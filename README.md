@@ -1,8 +1,28 @@
-# 🛡️ shipguard
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img alt="shipguard" src="docs/assets/logo-light.svg" width="360">
+  </picture>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <strong>Security scanning, build and test, and releases for your CI pipeline.</strong><br>
+  One image for GitHub, GitLab and Bitbucket.
+</p>
 
-Security scanning and a policy gate for your CI pipeline, on **GitHub**, **GitLab** and **Bitbucket**.
+<p align="center">
+  <a href="https://github.com/faridlamaul/shipguard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/faridlamaul/shipguard/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/faridlamaul/shipguard/actions/workflows/release.yml"><img alt="Release" src="https://github.com/faridlamaul/shipguard/actions/workflows/release.yml/badge.svg"></a>
+  <a href="https://github.com/faridlamaul/shipguard/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/faridlamaul/shipguard?sort=semver"></a>
+  <a href="https://golang.org"><img alt="Go Version" src="https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+</p>
+
+<p align="center">
+  <img alt="shipguard scanning a vulnerable Python project and blocking the gate" src="docs/assets/demo.gif" width="800">
+</p>
+
+Security scanning with a policy gate (`shipguard scan`), build and test (`shipguard ci`) and releases with a scanned, signed image (`shipguard release`) for your CI pipeline, on **GitHub**, **GitLab** and **Bitbucket**.
 
 shipguard runs four kinds of scan in one container image, applies one policy file to the results, and reports them to the platform you already use:
 
@@ -20,6 +40,7 @@ On a pull request only the findings the PR introduces can fail the gate. On the 
 | Part | State |
 |---|---|
 | Go CLI (`scan`, `gate`, `report`, `run`) | done |
+| `shipguard release`: version, binaries and a scanned, signed image, see [docs/release.md](docs/release.md) | CLI done |
 | `shipguard ci`: lint, test and build for Go, Node, Python, Ruby and Rust on GitHub, GitLab and Bitbucket | done, see [docs/ci.md](docs/ci.md) |
 | GitHub adapter (reusable workflow and composite action) | done |
 | GitLab component (CI/CD Catalog) | released |
@@ -84,11 +105,22 @@ jobs:
 
 GitLab and Bitbucket snippets, the defaults per language, the `ci:` config, outputs and exit codes are in [docs/ci.md](docs/ci.md). This replaces the legacy `go-ci`, `node-ci` and `python-ci` workflows below.
 
+## Screenshots
+
+A pull request whose scan blocks: the job summary lists every blocking finding.
+
+<img alt="shipguard job summary on GitHub listing blocking findings" src="docs/assets/github-job-summary.png" width="800">
+
+A release from `release-artifacts.yml`: the version, the binaries and the signed image with its digest.
+
+<img alt="shipguard release job summary on GitHub" src="docs/assets/github-release-summary.png" width="800">
+
 ## Documentation
 
 | Page | Contents |
 |---|---|
 | [docs/ci.md](docs/ci.md) | `shipguard ci`: usage per platform, defaults per language, `ci:` config, outputs, exit codes, security |
+| [docs/release.md](docs/release.md) | `shipguard release`: steps, `release:` config, dry run, outputs, exit codes, verifying releases |
 | [docs/configuration.md](docs/configuration.md) | Every `.shipguard.yaml` key, defaults, exceptions, PR policy, ignored scanner config, exit codes, environment variables |
 | [docs/github.md](docs/github.md) | Inputs, permissions, hardening, tier notes |
 | [docs/gitlab.md](docs/gitlab.md) | Component inputs, `include: remote` with integrity, hardening |
