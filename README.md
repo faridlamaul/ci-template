@@ -107,9 +107,13 @@ GitLab and Bitbucket snippets, the defaults per language, the `ci:` config, outp
 
 ## Screenshots
 
-<!-- screenshot: github-job-summary.png -->
+A pull request whose scan blocks: the job summary lists every blocking finding.
 
-<!-- screenshot: github-pr-annotations.png -->
+<img alt="shipguard job summary on GitHub listing blocking findings" src="docs/assets/github-job-summary.png" width="800">
+
+A release from `release-artifacts.yml`: the version, the binaries and the signed image with its digest.
+
+<img alt="shipguard release job summary on GitHub" src="docs/assets/github-release-summary.png" width="800">
 
 ## Documentation
 
