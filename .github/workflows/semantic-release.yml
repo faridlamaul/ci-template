@@ -1,3 +1,4 @@
+# DEPRECATED: semantic-release.yml is deprecated; use release-artifacts.yml (see docs/release.md).
 name: Reusable Semantic Release
 
 on:
@@ -57,6 +58,9 @@ jobs:
       version: ${{ steps.shiptag.outputs.version }}
       released: ${{ steps.shiptag.outputs.released }}
     steps:
+      - name: Deprecation notice
+        run: echo "::warning::semantic-release.yml is deprecated; use release-artifacts.yml (see docs/release.md)"
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

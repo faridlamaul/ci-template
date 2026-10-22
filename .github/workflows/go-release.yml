@@ -1,3 +1,4 @@
+# DEPRECATED: go-release.yml is deprecated; use release-artifacts.yml (see docs/release.md).
 name: Reusable GoReleaser
 
 on:
@@ -40,6 +41,9 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
+      - name: Deprecation notice
+        run: echo "::warning::go-release.yml is deprecated; use release-artifacts.yml (see docs/release.md)"
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
