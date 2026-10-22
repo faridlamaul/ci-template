@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,11 +13,12 @@ import (
 	"github.com/faridlamaul/shipguard/internal/release"
 )
 
-// relExec fakes shiptag, git, docker and trivy for the release command.
+// relExec fakes shiptag, git, docker, trivy and crane (the version tag is absent) for the release command.
 type relExec struct {
 	shiptag string // contents written to --output-file
 	trivy   string
 	calls   []string
+	cranes  []string // crane subcommands
 }
 
 func (f *relExec) Run(_ context.Context, _ string, _ []string, _ io.Writer, name string, args ...string) ([]byte, error) {
@@ -44,6 +46,11 @@ func (f *relExec) Run(_ context.Context, _ string, _ []string, _ io.Writer, name
 		}
 	case "trivy":
 		return []byte(f.trivy), nil
+	case "crane":
+		f.cranes = append(f.cranes, args[0])
+		if args[0] == "digest" {
+			return nil, errors.New("MANIFEST_UNKNOWN: manifest unknown")
+		}
 	}
 	return nil, nil
 }
@@ -116,9 +123,12 @@ func TestReleaseCmdBlocked(t *testing.T) {
 		t.Fatalf("summary = %s (%v)", sum, err)
 	}
 	for _, c := range f.calls {
-		if c == "crane" || c == "cosign" {
-			t.Fatalf("pushed or signed a blocked image: %v", f.calls)
+		if c == "cosign" {
+			t.Fatalf("signed a blocked image: %v", f.calls)
 		}
+	}
+	if strings.Join(f.cranes, " ") != "digest" {
+		t.Fatalf("pushed or tagged a blocked image: %v", f.cranes)
 	}
 }
 

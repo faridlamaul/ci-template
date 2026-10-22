@@ -26,9 +26,8 @@ type imgExec struct {
 	digestErr   string // text of the crane digest failure; default MANIFEST_UNKNOWN
 	layouts     []string
 	pushOut     string
-	layoutIndex string   // contents of the layout's top index blob; "" = a single manifest, no blob
-	pubManifest string   // output of crane manifest; "" = the command fails
 	pushErrs    []string // errors for the first crane push calls; later pushes succeed
+	tagErr      string   // crane tag fails with this text
 }
 
 func (f *imgExec) Run(_ context.Context, _ string, env []string, _ io.Writer, name string, args ...string) ([]byte, error) {
@@ -45,11 +44,6 @@ func (f *imgExec) Run(_ context.Context, _ string, env []string, _ io.Writer, na
 				_ = os.MkdirAll(dest, 0o700)
 				idx := `{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.index.v1+json","digest":"` + fakeLayoutDigest + `","size":1}]}`
 				_ = os.WriteFile(filepath.Join(dest, "index.json"), []byte(idx), 0o600)
-				if f.layoutIndex != "" {
-					blobs := filepath.Join(dest, "blobs", "sha256")
-					_ = os.MkdirAll(blobs, 0o700)
-					_ = os.WriteFile(filepath.Join(blobs, strings.TrimPrefix(fakeLayoutDigest, "sha256:")), []byte(f.layoutIndex), 0o600)
-				}
 			}
 		}
 	case "trivy":
@@ -65,11 +59,10 @@ func (f *imgExec) Run(_ context.Context, _ string, env []string, _ io.Writer, na
 				return nil, errors.New(msg)
 			}
 			return []byte(f.craneDigest + "\n"), nil
-		case "manifest":
-			if f.pubManifest == "" {
-				return nil, errors.New("manifest unavailable")
+		case "tag":
+			if f.tagErr != "" {
+				return nil, errors.New(f.tagErr)
 			}
-			return []byte(f.pubManifest), nil
 		case "push":
 			if len(f.pushErrs) > 0 {
 				msg := f.pushErrs[0]
@@ -102,6 +95,15 @@ func (f *imgExec) all(base string) []call {
 		}
 	}
 	return out
+}
+
+// craneVerbs lists the crane subcommands that were run.
+func (f *imgExec) craneVerbs() []string {
+	var v []string
+	for _, c := range f.all("crane") {
+		v = append(v, c.args[0])
+	}
+	return v
 }
 
 func imgOpts(t *testing.T, f *imgExec) Options {
@@ -230,7 +232,7 @@ func TestImageBlocked(t *testing.T) {
 	if s.Status != "blocked" || r.ExitCode() != 1 || len(r.Findings) == 0 || len(r.Blocking) == 0 {
 		t.Fatalf("s=%+v findings=%d", s, len(r.Findings))
 	}
-	if len(f.all("crane")) != 0 || len(f.all("cosign")) != 0 {
+	if strings.Join(f.craneVerbs(), " ") != "digest" || len(f.all("cosign")) != 0 {
 		t.Fatalf("calls = %v", f.names())
 	}
 	if _, err := os.Stat(filepath.Join(o.Dir, ".shipguard", "image-findings.json")); err == nil {
@@ -246,7 +248,7 @@ func TestImagePushSignOrder(t *testing.T) {
 		t.Fatalf("err=%v s=%+v r=%+v", err, s, r)
 	}
 	want := []string{
-		"docker buildx", "docker buildx", "trivy image", "trivy image", "crane digest", "crane push",
+		"crane digest", "docker buildx", "docker buildx", "trivy image", "trivy image", "crane push",
 		"crane tag", "crane tag", "crane tag", "cosign sign",
 	}
 	got := f.names()
@@ -278,94 +280,78 @@ func TestImagePushSignOrder(t *testing.T) {
 	}
 }
 
-func TestImageRerunSameDigest(t *testing.T) {
-	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: fakeLayoutDigest}
-	r, s, err := runImage(t, imgOpts(t, f), "1.4.0")
-	if err != nil || s.Status != "passed" || r.ImageDigest != fakeLayoutDigest {
+const pubDigest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+// A published version tag means a re-run: the image is not rebuilt; the
+// published digest is scanned, re-tagged and signed.
+func TestImageRerunKeepsPublished(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubDigest}
+	o := imgOpts(t, f)
+	var out strings.Builder
+	o.Out = &out
+	r, s, err := runImage(t, o, "1.4.0")
+	if err != nil || s.Status != "passed" || s.Reason != "re-run: kept the published image" || r.ImageDigest != pubDigest {
 		t.Fatalf("err=%v s=%+v r=%+v", err, s, r)
 	}
-	for _, c := range f.all("crane") {
-		if c.args[0] == "push" {
-			t.Fatal("push must be skipped")
+	want := "crane digest|trivy image|trivy image|crane tag|crane tag|crane tag|crane tag|cosign sign"
+	if got := strings.Join(f.names(), "|"); got != want {
+		t.Fatalf("calls = %s", got)
+	}
+	if !strings.Contains(out.String(), "v1.4.0 is already published as "+pubDigest+"; scanning the published image") {
+		t.Errorf("out = %q", out.String())
+	}
+	ref := "ghcr.io/o/app@" + pubDigest
+	cache := filepath.Join(o.CacheDir, "trivy")
+	for i, p := range []string{"linux/amd64", "linux/arm64"} {
+		want := "image --platform " + p + " --scanners vuln --format json --cache-dir " + cache + " " + ref
+		if got := strings.Join(f.all("trivy")[i].args, " "); got != want {
+			t.Errorf("trivy argv = %q", got)
 		}
 	}
-	if len(f.all("cosign")) != 1 {
+	for i, tag := range []string{"v1.4.0", "1.4.0", "v1.4", "v1"} {
+		if got := strings.Join(f.all("crane")[1+i].args, " "); got != "tag "+ref+" "+tag {
+			t.Errorf("tag %d = %q", i, got)
+		}
+	}
+	if got := strings.Join(f.all("cosign")[0].args, " "); got != "sign --yes "+ref {
+		t.Errorf("cosign = %q", got)
+	}
+}
+
+func TestImageRerunBlocked(t *testing.T) {
+	raw, err := os.ReadFile("../scanner/testdata/trivy-image.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &imgExec{trivyOut: raw, craneDigest: pubDigest}
+	o := imgOpts(t, f)
+	o.Config.Policy.FailOn[finding.CategorySCA] = policy.Threshold{Severity: finding.High}
+	r, s, _ := runImage(t, o, "1.4.0")
+	if s.Status != "blocked" || len(r.Findings) == 0 || len(r.Blocking) == 0 {
+		t.Fatalf("s=%+v findings=%d", s, len(r.Findings))
+	}
+	if strings.Join(f.craneVerbs(), " ") != "digest" || len(f.all("cosign")) != 0 || len(f.all("docker")) != 0 {
 		t.Fatalf("calls = %v", f.names())
 	}
-	n := 0
-	for _, c := range f.all("crane") {
-		if c.args[0] == "tag" {
-			n++
-		}
-	}
-	if n != 3 {
-		t.Fatalf("tags = %d", n)
-	}
 }
 
-func TestImageRerunDifferentDigest(t *testing.T) {
-	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: "sha256:2222"}
-	_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
-	if s.Status != "failed" || !strings.Contains(s.Reason, "already published") {
+func TestImageRerunNeedsOIDC(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubDigest}
+	o := imgOpts(t, f)
+	o.Getenv = oidcEnv(nil)
+	_, s, _ := runImage(t, o, "1.4.0")
+	if s.Status != "failed" || !strings.Contains(s.Reason, "signing needs an OIDC identity") {
 		t.Fatalf("s=%+v", s)
 	}
-	for _, c := range f.all("crane") {
-		if c.args[0] != "digest" && c.args[0] != "manifest" {
-			t.Fatalf("unexpected crane %v", c.args)
-		}
-	}
-	if len(f.all("cosign")) != 0 {
-		t.Fatal("no sign")
+	if len(f.all("trivy")) != 2 || strings.Join(f.craneVerbs(), " ") != "digest" || len(f.all("cosign")) != 0 {
+		t.Fatalf("calls = %v", f.names())
 	}
 }
 
-// indexOf builds an image index with the given platform image digests and attestation digests.
-func indexOf(images, attestations []string) string {
-	var ms []string
-	for _, d := range images {
-		ms = append(ms, `{"digest":"`+d+`","platform":{"os":"linux","architecture":"amd64"}}`)
-	}
-	for _, d := range attestations {
-		ms = append(ms, `{"digest":"`+d+`","annotations":{"vnd.docker.reference.type":"attestation-manifest"}}`)
-	}
-	return `{"schemaVersion":2,"manifests":[` + strings.Join(ms, ",") + `]}`
-}
-
-const (
-	imgA  = "sha256:aaaa"
-	imgB  = "sha256:bbbb"
-	attO  = "sha256:0001"
-	attN  = "sha256:0002"
-	pubIx = "sha256:2222"
-)
-
-// A rebuild of the same source has the same images but new attestations
-// (they carry timestamps), so the index digest differs from the published one.
-func TestImageRerunSameImagesNewAttestations(t *testing.T) {
-	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubIx,
-		layoutIndex: indexOf([]string{imgA}, []string{attN}), pubManifest: indexOf([]string{imgA}, []string{attO})}
-	r, s, err := runImage(t, imgOpts(t, f), "1.4.0")
-	if err != nil || s.Status != "passed" || r.ImageDigest != pubIx {
-		t.Fatalf("err=%v s=%+v r=%+v", err, s, r)
-	}
-	for _, c := range f.all("crane") {
-		if c.args[0] == "push" {
-			t.Fatal("push must be skipped")
-		}
-	}
-	if got := strings.Join(f.all("crane")[1].args, " "); got != "manifest ghcr.io/o/app@"+pubIx {
-		t.Errorf("manifest = %q", got)
-	}
-	if got := strings.Join(f.all("cosign")[0].args, " "); got != "sign --yes ghcr.io/o/app@"+pubIx {
-		t.Errorf("must sign the published digest, got %q", got)
-	}
-}
-
-func TestImageRerunDifferentImages(t *testing.T) {
-	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubIx,
-		layoutIndex: indexOf([]string{imgB}, []string{attN}), pubManifest: indexOf([]string{imgA}, []string{attO})}
+func TestImageRerunTagFailure(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubDigest, tagErr: "boom"}
 	_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
-	if s.Status != "failed" || !strings.Contains(s.Reason, "already published") || len(f.all("cosign")) != 0 {
+	if s.Status != "failed" || !strings.Contains(s.Reason, "crane tag") || len(f.all("cosign")) != 0 {
 		t.Fatalf("s=%+v", s)
 	}
 }
@@ -390,10 +376,8 @@ func TestImageDigestOtherErrorFails(t *testing.T) {
 		if s.Status != "failed" || !strings.Contains(s.Reason, "cannot check existing tag") {
 			t.Fatalf("%q: s=%+v", msg, s)
 		}
-		for _, c := range f.all("crane") {
-			if c.args[0] != "digest" {
-				t.Fatalf("unexpected crane %v", c.args)
-			}
+		if strings.Join(f.craneVerbs(), " ") != "digest" || len(f.all("docker")) != 0 || len(f.all("trivy")) != 0 {
+			t.Fatalf("%q: calls = %v, want only crane digest", msg, f.names())
 		}
 	}
 }
@@ -480,8 +464,8 @@ func TestImageNeedsOIDCBeforePush(t *testing.T) {
 		if len(f.all("docker")) == 0 || len(f.all("trivy")) == 0 {
 			t.Fatalf("env=%v: build and scan must run first: %v", env, f.names())
 		}
-		if len(f.all("crane")) != 0 || len(f.all("cosign")) != 0 {
-			t.Fatalf("env=%v: calls = %v, want no crane or cosign", env, f.names())
+		if strings.Join(f.craneVerbs(), " ") != "digest" || len(f.all("cosign")) != 0 {
+			t.Fatalf("env=%v: calls = %v, want only crane digest", env, f.names())
 		}
 	}
 }
@@ -497,7 +481,7 @@ func TestImageBlockedWithoutOIDC(t *testing.T) {
 	o.Getenv = oidcEnv(nil)
 	o.Config.Policy.FailOn[finding.CategorySCA] = policy.Threshold{Severity: finding.High}
 	_, s, _ := runImage(t, o, "1.4.0")
-	if s.Status != "blocked" || len(f.all("crane")) != 0 {
+	if s.Status != "blocked" || strings.Join(f.craneVerbs(), " ") != "digest" {
 		t.Fatalf("s=%+v calls=%v", s, f.names())
 	}
 }
@@ -522,52 +506,6 @@ func TestImageDryRunNeedsNoOIDC(t *testing.T) {
 	o.DryRun = true
 	o.Getenv = oidcEnv(nil)
 	if _, s, _ := runImage(t, o, dryRunVersion); s.Status != "passed" {
-		t.Fatalf("s=%+v", s)
-	}
-}
-
-// The re-run comparison fails closed on anything but the same platform images.
-func TestImageRerunComparison(t *testing.T) {
-	two := `{"manifests":[{"digest":"` + imgA + `","platform":{"os":"linux","architecture":"amd64"}},{"digest":"` + imgB + `","platform":{"os":"linux","architecture":"arm64"}}]}`
-	noAnnotation := `{"manifests":[{"digest":"` + imgA + `"},{"digest":"` + attO + `"}]}`
-	tests := []struct {
-		name      string
-		layout    string
-		published string
-		skip      bool
-	}{
-		{"same images, new attestations", indexOf([]string{imgA}, []string{attN}), indexOf([]string{imgA}, []string{attO}), true},
-		{"platform added", two, indexOf([]string{imgA}, []string{attO}), false},
-		{"platform removed", indexOf([]string{imgA}, []string{attN}), two, false},
-		{"published single image", indexOf([]string{imgA}, []string{attN}), `{"schemaVersion":2,"config":{"digest":"` + imgA + `"}}`, false},
-		{"published attestation without annotation", indexOf([]string{imgA}, []string{attN}), noAnnotation, false},
-		{"built attestation without annotation", noAnnotation, indexOf([]string{imgA}, []string{attO}), false},
-		{"layout is a single image", "", indexOf([]string{imgA}, []string{attO}), false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubIx, layoutIndex: tc.layout, pubManifest: tc.published}
-			_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
-			signed := len(f.all("cosign")) == 1
-			if tc.skip && (s.Status != "passed" || !signed) {
-				t.Fatalf("want skip and sign: s=%+v", s)
-			}
-			if !tc.skip && (s.Status != "failed" || !strings.Contains(s.Reason, "already published") || signed) {
-				t.Fatalf("want fail closed: s=%+v", s)
-			}
-			for _, c := range f.all("crane") {
-				if c.args[0] == "push" || c.args[0] == "tag" && !tc.skip {
-					t.Fatalf("unexpected crane %v", c.args)
-				}
-			}
-		})
-	}
-}
-
-func TestImageRerunManifestErrorInReason(t *testing.T) {
-	f := &imgExec{trivyOut: cleanTrivy(), craneDigest: pubIx, layoutIndex: indexOf([]string{imgA}, nil)}
-	_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
-	if s.Status != "failed" || !strings.Contains(s.Reason, "cannot be read") || !strings.Contains(s.Reason, "manifest unavailable") {
 		t.Fatalf("s=%+v", s)
 	}
 }

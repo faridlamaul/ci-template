@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -66,37 +65,6 @@ func layoutDigest(layout string) (string, error) {
 	return idx.Manifests[0].Digest, nil
 }
 
-// imageDigests returns the sorted digests of the platform images listed in an
-// image index, without the attestation manifests. It is nil for anything else.
-func imageDigests(index []byte) []string {
-	var idx struct {
-		Manifests []struct {
-			Digest      string            `json:"digest"`
-			Annotations map[string]string `json:"annotations"`
-		} `json:"manifests"`
-	}
-	if json.Unmarshal(index, &idx) != nil {
-		return nil
-	}
-	var out []string
-	for _, m := range idx.Manifests {
-		if m.Annotations["vnd.docker.reference.type"] != "attestation-manifest" {
-			out = append(out, m.Digest)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// layoutImageDigests is imageDigests for the index blob that digest names in the layout.
-func layoutImageDigests(layout, digest string) []string {
-	data, err := os.ReadFile(filepath.Join(layout, "blobs", "sha256", strings.TrimPrefix(digest, "sha256:")))
-	if err != nil {
-		return nil
-	}
-	return imageDigests(data)
-}
-
 // tagAbsent reports whether crane's error says the manifest or repository does not exist.
 func tagAbsent(msg string) bool { return absentRe.MatchString(msg) }
 
@@ -120,6 +88,8 @@ func hasOIDC(getenv func(string) string) bool {
 	}
 	return getenv("ACTIONS_ID_TOKEN_REQUEST_URL") != "" && getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") != ""
 }
+
+const errNoOIDC = "signing needs an OIDC identity: grant `id-token: write` (GitHub) or set SIGSTORE_ID_TOKEN"
 
 // pushWithRetry runs crane push up to three times, waiting 5s then 15s. The
 // first push to a new ghcr package can be denied while the package is created.
@@ -157,14 +127,13 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 	}
 	r.Image = name
 
-	if _, err := o.Exec.Run(ctx, o.Dir, nil, io.Discard, "docker", "buildx", "version"); err != nil {
-		return fail("docker buildx is not available; add docker/setup-buildx-action before shipguard release")
-	}
 	trivy, err := o.Tool(ctx, "trivy")
 	if err != nil {
 		return fail("%v", err)
 	}
 	var crane, cosign string
+	tags := imageTags(r.Version)
+	ref := name + ":" + tags[0]
 	if !o.DryRun {
 		if crane, err = o.Tool(ctx, "crane"); err != nil {
 			return fail("%v", err)
@@ -172,8 +141,22 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 		if cosign, err = o.Tool(ctx, "cosign"); err != nil {
 			return fail("%v", err)
 		}
+		// A published version tag is never rebuilt: the re-run keeps that image.
+		var digestLog bytes.Buffer // crane prints the registry error on stderr
+		pub, err := o.Exec.Run(ctx, o.Dir, nil, &digestLog, crane, "digest", ref)
+		switch {
+		case err == nil:
+			published := strings.TrimSpace(string(pub))
+			_, _ = fmt.Fprintf(o.Out, "%s is already published as %s; scanning the published image\n", tags[0], published)
+			return rerun(ctx, o, r, trivy, crane, cosign, name, published)
+		case !tagAbsent(err.Error() + " " + digestLog.String()):
+			return fail("cannot check existing tag: %v: %s", err, oneLine(digestLog.String(), 300))
+		}
 	}
 
+	if _, err := o.Exec.Run(ctx, o.Dir, nil, io.Discard, "docker", "buildx", "version"); err != nil {
+		return fail("docker buildx is not available; add docker/setup-buildx-action before shipguard release")
+	}
 	tmp, err := os.MkdirTemp("", "shipguard-image-")
 	if err != nil {
 		return fail("%v", err)
@@ -203,28 +186,10 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 	}
 
 	cache := filepath.Join(o.CacheDir, "trivy")
-	var findings []finding.Finding
-	for _, p := range cfg.Platforms {
-		out, err := o.Exec.Run(ctx, o.Dir, nil, io.Discard, trivy, "image", "--input", layout,
-			"--platform", p, "--scanners", "vuln", "--format", "json", "--cache-dir", cache)
-		if err != nil {
-			return fail("trivy (%s): %v", p, err)
-		}
-		fs, err := scanner.ParseTrivyImage(out, name, p)
-		if err != nil {
-			return fail("trivy (%s): %v", p, err)
-		}
-		_, _ = fmt.Fprintf(o.Out, "trivy %s: %d vulnerabilities\n", p, len(fs))
-		findings = append(findings, fs...)
-	}
-	r.Findings = findings
-	d := policy.Evaluate(finding.Result{Findings: findings}, o.Config, false, time.Now())
-	r.Blocking = d.Blocking
-	if d.ExitCode() != 0 {
-		for _, f := range d.Blocking {
-			_, _ = fmt.Fprintf(o.Out, "%s  %s  %s\n", strings.ToUpper(f.Severity.String()), f.ID, f.File)
-		}
-		return StepResult{Status: "blocked", Reason: fmt.Sprintf("%d image finding(s) above the policy threshold; nothing was pushed", len(d.Blocking))}
+	if s := gate(ctx, o, r, trivy, name, "nothing was pushed", func(p string) []string {
+		return append([]string{"image", "--input", layout}, trivyArgs(cache, p)...)
+	}); s != nil {
+		return *s
 	}
 	if o.DryRun {
 		return StepResult{Status: "passed", Reason: "dry run"}
@@ -232,53 +197,95 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 
 	// After the gate, so a blocked image is reported even without an identity.
 	if !hasOIDC(o.Getenv) {
-		return fail("signing needs an OIDC identity: grant `id-token: write` (GitHub) or set SIGSTORE_ID_TOKEN; nothing was pushed")
+		return fail("%s; nothing was pushed", errNoOIDC)
 	}
 
-	tags := imageTags(r.Version)
-	ref := name + ":" + tags[0]
-	var digestLog bytes.Buffer // crane prints the registry error on stderr
-	pub, err := o.Exec.Run(ctx, o.Dir, nil, &digestLog, crane, "digest", ref)
-	if err != nil && !tagAbsent(err.Error()+" "+digestLog.String()) {
-		return fail("cannot check existing tag: %v: %s", err, oneLine(digestLog.String(), 300))
+	// A one-entry layout pushes that entry, so the digest is manifests[0].digest.
+	out, err := pushWithRetry(ctx, o, crane, layout, ref)
+	if err != nil {
+		return fail("crane push: %v", err)
 	}
-	switch {
-	case err != nil: // absent: push. A one-entry layout pushes that entry, so the digest is manifests[0].digest.
-		out, err := pushWithRetry(ctx, o, crane, layout, ref)
+	m := pushedDigestRe.FindSubmatch(out)
+	if m == nil {
+		return fail("crane push printed no digest")
+	}
+	if string(m[1]) != digest {
+		return fail("pushed digest does not match the scanned layout (%s != %s)", m[1], digest)
+	}
+	if s := tagAndSign(ctx, o, r, crane, cosign, ref, tags[1:], name+"@"+digest, digest); s != nil {
+		return *s
+	}
+	return StepResult{Status: "passed", Reason: name + "@" + digest}
+}
+
+// rerun finishes a release whose version tag is already published: it scans the
+// published image again, then re-applies every tag and signs it. Nothing is rebuilt.
+func rerun(ctx context.Context, o Options, r *Result, trivy, crane, cosign, name, digest string) StepResult {
+	pinned := name + "@" + digest
+	cache := filepath.Join(o.CacheDir, "trivy")
+	if s := gate(ctx, o, r, trivy, name, "nothing was tagged or signed", func(p string) []string {
+		return append(append([]string{"image"}, trivyArgs(cache, p)...), pinned)
+	}); s != nil {
+		return *s
+	}
+	if !hasOIDC(o.Getenv) {
+		return fail("%s; nothing was tagged or signed", errNoOIDC)
+	}
+	if s := tagAndSign(ctx, o, r, crane, cosign, pinned, imageTags(r.Version), pinned, digest); s != nil {
+		return *s
+	}
+	return StepResult{Status: "passed", Reason: "re-run: kept the published image"}
+}
+
+func trivyArgs(cache, platform string) []string {
+	return []string{"--platform", platform, "--scanners", "vuln", "--format", "json", "--cache-dir", cache}
+}
+
+// gate scans every platform (trivy gets argv(platform)), records the findings in r
+// and applies the policy. It returns the step result when the scan failed or the
+// image is blocked, else nil. untouched says what the block left alone.
+func gate(ctx context.Context, o Options, r *Result, trivy, name, untouched string, argv func(platform string) []string) *StepResult {
+	var findings []finding.Finding
+	for _, p := range o.Config.Release.Image.Platforms {
+		out, err := o.Exec.Run(ctx, o.Dir, nil, io.Discard, trivy, argv(p)...)
 		if err != nil {
-			return fail("crane push: %v", err)
+			s := fail("trivy (%s): %v", p, err)
+			return &s
 		}
-		m := pushedDigestRe.FindSubmatch(out)
-		if m == nil {
-			return fail("crane push printed no digest")
+		fs, err := scanner.ParseTrivyImage(out, name, p)
+		if err != nil {
+			s := fail("trivy (%s): %v", p, err)
+			return &s
 		}
-		if string(m[1]) != digest {
-			return fail("pushed digest does not match the scanned layout (%s != %s)", m[1], digest)
-		}
-	case strings.TrimSpace(string(pub)) != digest:
-		// The attestations carry build timestamps, so a rebuild of the same source has a
-		// new index digest. It is the same release when the platform images are the same.
-		published := strings.TrimSpace(string(pub))
-		var manifestLog bytes.Buffer
-		manifest, merr := o.Exec.Run(ctx, o.Dir, nil, &manifestLog, crane, "manifest", name+"@"+published)
-		if merr != nil {
-			return fail("%s is already published with a different digest (%s) and its manifest cannot be read: %v: %s", ref, published, merr, oneLine(manifestLog.String(), 300))
-		}
-		built, was := layoutImageDigests(layout, digest), imageDigests(manifest)
-		if len(built) == 0 || !slices.Equal(built, was) {
-			return fail("%s is already published with a different digest (%s); a published tag is never moved", ref, published)
-		}
-		_, _ = fmt.Fprintf(o.Out, "%s is already published with the same images; keeping %s\n", ref, published)
-		digest = published // sign what is published
+		_, _ = fmt.Fprintf(o.Out, "trivy %s: %d vulnerabilities\n", p, len(fs))
+		findings = append(findings, fs...)
 	}
-	for _, t := range tags[1:] {
-		if _, err := o.Exec.Run(ctx, o.Dir, nil, o.Out, crane, "tag", ref, t); err != nil {
-			return fail("crane tag %s: %v", t, err)
+	r.Findings = findings
+	d := policy.Evaluate(finding.Result{Findings: findings}, o.Config, false, time.Now())
+	r.Blocking = d.Blocking
+	if d.ExitCode() == 0 {
+		return nil
+	}
+	for _, f := range d.Blocking {
+		_, _ = fmt.Fprintf(o.Out, "%s  %s  %s\n", strings.ToUpper(f.Severity.String()), f.ID, f.File)
+	}
+	s := StepResult{Status: "blocked", Reason: fmt.Sprintf("%d image finding(s) above the policy threshold; %s", len(d.Blocking), untouched)}
+	return &s
+}
+
+// tagAndSign tags the image at from with tags, signs signRef and records digest.
+// It returns the failed step, or nil.
+func tagAndSign(ctx context.Context, o Options, r *Result, crane, cosign, from string, tags []string, signRef, digest string) *StepResult {
+	for _, t := range tags {
+		if _, err := o.Exec.Run(ctx, o.Dir, nil, o.Out, crane, "tag", from, t); err != nil {
+			s := fail("crane tag %s: %v", t, err)
+			return &s
 		}
 	}
-	if _, err := o.Exec.Run(ctx, o.Dir, nil, o.Out, cosign, "sign", "--yes", name+"@"+digest); err != nil {
-		return fail("cosign sign: %v", err)
+	if _, err := o.Exec.Run(ctx, o.Dir, nil, o.Out, cosign, "sign", "--yes", signRef); err != nil {
+		s := fail("cosign sign: %v", err)
+		return &s
 	}
 	r.ImageDigest = digest
-	return StepResult{Status: "passed", Reason: name + "@" + digest}
+	return nil
 }

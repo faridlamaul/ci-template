@@ -1,6 +1,6 @@
 # shipguard release
 
-`shipguard release` versions a release and publishes its binaries and its container image. The image is built to a local OCI layout and scanned first; one that fails the policy never reaches the registry. The digest that was scanned is the digest that is pushed and signed.
+`shipguard release` versions a release and publishes its binaries and its container image. A new image is built to a local OCI layout and scanned first; one that fails the policy never reaches the registry. The digest that was scanned is the digest that is pushed and signed. A version whose image is already published is not rebuilt (see [Re-running a release](#re-running-a-release)).
 
 It orchestrates pinned tools (shiptag, GoReleaser, trivy, crane, cosign; downloaded and hash-verified like the `shipguard ci` tools) and `docker buildx` from the runner. The CLI never handles registry tokens: crane and cosign read the docker config (log in before the run) and the ambient OIDC identity.
 
@@ -32,13 +32,17 @@ A step that does not apply is `skipped` with a reason. A failed step marks every
 
 ### Image
 
-Before anything is pushed (after the scan gate, so a blocked image is still reported) the step checks that signing can work: `SIGSTORE_ID_TOKEN` is set, or the GitHub OIDC endpoint is available (`id-token: write` on the job). Without either it fails with "nothing was pushed", instead of publishing an unsigned image or waiting for a browser sign-in. A dry run needs no identity.
+The step first looks up `<name>:vX.Y.Z` in the registry. If the tag is absent, the image is built, scanned and published (steps 1 to 5). If it exists, the image is already published and the re-run path applies instead (below).
+
+Before anything is pushed (after the scan gate, so a blocked image is still reported) the step checks that signing can work: `SIGSTORE_ID_TOKEN` is set, or the GitHub OIDC endpoint is available (`id-token: write` on the job). Without either it fails with "nothing was pushed", instead of publishing an unsigned image or waiting for a browser sign-in. A dry run needs no identity and never calls the registry.
 
 1. `docker buildx build` for each configured platform with BuildKit SBOM and max-mode provenance, to a local OCI layout. `VERSION` is always passed as a build argument (`X.Y.Z`). A missing buildx builder is an error that names `docker/setup-buildx-action`.
 2. `trivy image` scans each platform. Vulnerabilities become SCA findings and the existing `policy.fail_on.sca` threshold and `exceptions` decide. A block prints the findings, writes `image-findings.json`, exits 1 and pushes nothing.
-3. If `<name>:vX.Y.Z` already exists with the same digest, the push is skipped (a re-run). Attestations carry build timestamps, so a rebuild of the same source has a new index digest; when its platform images are the same as the published ones it counts as the published release: nothing is pushed and the published digest is signed. Any other difference is an error: a published tag is never moved.
-4. `crane push` of the layout, then `crane tag` for the other tags.
+3. `crane push` of the layout. The pushed digest must equal the scanned one.
+4. `crane tag` for the other tags.
 5. `cosign sign --yes <name>@<digest>` (keyless).
+
+If `<name>:vX.Y.Z` already exists (a re-run), nothing is built or pushed and a published tag is never moved. The published image is scanned again, per platform, with `trivy image` against the registry (trivy reads the docker config for credentials) and the same policy gate; a block tags and signs nothing. Then, with an OIDC identity, every tag is applied to the published digest (the version tag is unchanged; a missing moving tag is repaired) and the published digest is signed.
 
 The pinned tools and the trivy cache live outside the repository, in `$RUNNER_TEMP/shipguard-cache` (else the user cache directory, `shipguard` inside it), so they are never in the build context. shipguard's own output is not: when your Dockerfile copies the whole context (`COPY . .`), add `dist/` (GoReleaser output) and `.shipguard/` to `.dockerignore`.
 
@@ -119,7 +123,7 @@ A caller that pins the workflow by commit SHA builds shipguard from source; pinn
 
 ## Re-running a release
 
-A re-run after a failed build finishes the release without creating a second tag: the version step reuses the tag at `HEAD` (with several release tags at `HEAD`, the highest stable one, else the highest prerelease), the binaries step runs again, and an image already pushed with the same digest is not pushed again. An image that was pushed but not signed is signed by the re-run.
+A re-run after a failed build finishes the release without creating a second tag: the version step reuses the tag at `HEAD` (with several release tags at `HEAD`, the highest stable one, else the highest prerelease) and the binaries step runs again. An existing version tag in the registry means the image is already published: it is not rebuilt. The published image is scanned again, re-tagged and signed, so an image that was pushed but not signed is signed by the re-run, and a moving tag that was not applied is applied.
 
 The binaries step uploads again only when GoReleaser may replace the assets of the existing GitHub release. Set this in `.goreleaser.yaml`, otherwise a re-run after a partial upload fails on the existing assets:
 

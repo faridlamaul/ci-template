@@ -246,6 +246,9 @@ func publishedDigest(t *testing.T, crane, ref string) string {
 	return out
 }
 
+// buildMarker is a line of BuildKit's plain progress, present only when an image is built.
+const buildMarker = "[internal] load build definition"
+
 func releaseTags(version string) []string {
 	parts := strings.Split(version, ".")
 	return []string{"v" + version, version, "v" + parts[0] + "." + parts[1], "v" + parts[0]}
@@ -349,6 +352,9 @@ func TestReleaseImage(t *testing.T) {
 		if s := res.step(t, "image"); s.Status != "failed" || !strings.Contains(s.Reason, "cosign sign") {
 			t.Fatalf("image step = %+v, want failed at cosign sign\n%s", s, out)
 		}
+		if !strings.Contains(out, buildMarker) {
+			t.Errorf("the first release shows no build output (%q), so the re-run check proves nothing\n%s", buildMarker, out)
+		}
 		firstDigest = publishedDigest(t, crane, cleanImage+":"+releaseTag)
 		t.Logf("published %s:{%s} = %s", cleanImage, strings.Join(releaseTags(version), ","), firstDigest)
 		for _, tag := range releaseTags(version) {
@@ -359,9 +365,9 @@ func TestReleaseImage(t *testing.T) {
 		checkPushedIndex(t, crane, cleanImage+":"+releaseTag)
 	})
 
-	// The same release again: the digest is the published one, so nothing is
-	// pushed (a push would move the tag), and signing fails the same way.
-	t.Run("clean rerun skips the push", func(t *testing.T) {
+	// The same release again: the version tag exists, so nothing is rebuilt; the
+	// published image is scanned, re-tagged and signed (which fails the same way).
+	t.Run("clean rerun keeps the published image", func(t *testing.T) {
 		if firstDigest == "" {
 			t.Skip("the first release did not publish")
 		}
@@ -373,11 +379,11 @@ func TestReleaseImage(t *testing.T) {
 		if s.Status != "failed" || !strings.Contains(s.Reason, "cosign sign") {
 			t.Fatalf("image step = %+v, want failed at cosign sign\n%s", s, out)
 		}
-		if !strings.Contains(out, "already published with the same images; keeping "+firstDigest) {
-			t.Errorf("no skip line for the published digest in the output\n%s", out)
+		if !strings.Contains(out, releaseTag+" is already published as "+firstDigest) {
+			t.Errorf("no re-run line for the published digest in the output\n%s", out)
 		}
-		if !strings.Contains(out, firstDigest) {
-			t.Errorf("the published digest %s is not the one signed\n%s", firstDigest, out)
+		if strings.Contains(out, buildMarker) {
+			t.Errorf("the re-run built the image\n%s", out)
 		}
 		for _, tag := range releaseTags(version) {
 			if got := publishedDigest(t, crane, cleanImage+":"+tag); got != firstDigest {
