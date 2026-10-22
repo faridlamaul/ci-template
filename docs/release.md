@@ -130,12 +130,24 @@ release:
 
 ## Verify a release
 
+The signing identity is shipguard's reusable workflow, not your repository, because the signature is made by the job that runs `release-artifacts.yml`; `--certificate-github-workflow-repository` binds it to your repository.
+
 ```bash
 cosign verify ghcr.io/<owner>/<repo>:vX.Y.Z \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/<owner>/<repo>/'
+  --certificate-identity-regexp '^https://github.com/faridlamaul/shipguard/\.github/workflows/release-artifacts\.yml@' \
+  --certificate-github-workflow-repository <owner>/<repo>
+
+cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/faridlamaul/shipguard/\.github/workflows/release-artifacts\.yml@' \
+  --certificate-github-workflow-repository <owner>/<repo>
 
 gh attestation verify oci://ghcr.io/<owner>/<repo>:vX.Y.Z --repo <owner>/<repo>
 ```
 
-For binaries, verify the signature on `checksums.txt` with the `cosign verify-blob` command that matches your GoReleaser `signs:` block, then check the files against it.
+`gh attestation verify` needs attestations enabled: public repositories or organisation repositories. GitHub refuses attestations for private repositories owned by a user account; the workflow input `attest: false` skips them there, and the cosign signatures still apply.
+
+The first push to a new ghcr package can be denied while GitHub creates the package, so the image push is retried (3 attempts, waiting 5s then 15s).
+
+For binaries, verify `checksums.txt` as above (this assumes the GoReleaser `signs:` block writes `checksums.txt.sigstore.json`), then check the files against it.

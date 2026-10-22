@@ -101,7 +101,7 @@ jobs:
     permissions: { contents: write, packages: write, id-token: write, attestations: write }
 ```
 
-Inputs: `steps`, `dir`, `config`, `prerelease`, `dry-run`, `shipguard-version` and `runs-on`. Outputs: `released`, `tag`, `version`, `image` and `image_digest`. See [shipguard release](release.md) for the steps, the image gate and the configuration.
+Inputs: `steps`, `dir`, `config`, `prerelease`, `dry-run`, `shipguard-version`, `attest` and `runs-on`. Outputs: `released`, `tag`, `version`, `image` and `image_digest`. `attest` (default `true`) creates GitHub artifact attestations; GitHub refuses them for private repositories owned by a user account, so set `attest: false` there. See [shipguard release](release.md) for the steps, how to verify what it publishes, the image gate and the configuration.
 
 Call it only from trusted refs (a push to the default branch, a tag, `workflow_dispatch`), never from `pull_request_target` or an untrusted ref: `GITHUB_TOKEN` and the OIDC token are visible to GoReleaser hooks. Pinning `@vX.Y.Z` installs the signed release binary; pinning a commit SHA builds shipguard from source.
 

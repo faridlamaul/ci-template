@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -94,25 +95,23 @@ func releaseEnv(token bool, extra ...string) []string {
 // startRegistry runs registry:2 on a free local port and returns host:port.
 func startRegistry(t *testing.T) string {
 	t.Helper()
-	id, code := docker(t, "run", "-d", "--rm", "-p", "127.0.0.1::5000", "registry:2")
+	// Pick a free port here: `docker port` is not reliable across daemons.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := fmt.Sprint(l.Addr().(*net.TCPAddr).Port)
+	_ = l.Close()
+	id, code := docker(t, "run", "-d", "--rm", "-p", "127.0.0.1:"+port+":5000", "registry:2")
 	if code != 0 {
 		t.Fatalf("docker run registry:2: %s", id)
 	}
 	id = strings.TrimSpace(id)
 	t.Cleanup(func() { docker(t, "rm", "-f", id) })
-	out, code := docker(t, "port", id, "5000/tcp")
-	if code != 0 {
-		t.Fatalf("docker port: %s", out)
-	}
-	// "127.0.0.1:32768" (and a second line for IPv6 when published there too)
-	_, port, ok := strings.Cut(strings.Fields(out)[0], ":")
-	if !ok {
-		t.Fatalf("cannot parse docker port output %q", out)
-	}
 	addr := "localhost:" + port
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		resp, err := http.Get("http://" + addr + "/v2/")
+		resp, err := http.Get("http://127.0.0.1:" + port + "/v2/")
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

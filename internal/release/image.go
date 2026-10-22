@@ -121,6 +121,24 @@ func hasOIDC(getenv func(string) string) bool {
 	return getenv("ACTIONS_ID_TOKEN_REQUEST_URL") != "" && getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN") != ""
 }
 
+// pushWithRetry runs crane push up to three times, waiting 5s then 15s. The
+// first push to a new ghcr package can be denied while the package is created.
+func pushWithRetry(ctx context.Context, o Options, crane, layout, ref string) ([]byte, error) {
+	sleep := o.Sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	waits := []time.Duration{5 * time.Second, 15 * time.Second}
+	for attempt := 0; ; attempt++ {
+		out, err := o.Exec.Run(ctx, o.Dir, nil, o.Out, crane, "push", layout, ref)
+		if err == nil || attempt == len(waits) {
+			return out, err
+		}
+		_, _ = fmt.Fprintf(o.Out, "crane push attempt %d failed, retrying in %s: %s\n", attempt+1, waits[attempt], oneLine(err.Error(), 300))
+		sleep(waits[attempt])
+	}
+}
+
 func image(ctx context.Context, o Options, r *Result) StepResult {
 	cfg := o.Config.Release.Image
 	if _, err := os.Stat(filepath.Join(o.Dir, cfg.Dockerfile)); err != nil {
@@ -226,7 +244,7 @@ func image(ctx context.Context, o Options, r *Result) StepResult {
 	}
 	switch {
 	case err != nil: // absent: push. A one-entry layout pushes that entry, so the digest is manifests[0].digest.
-		out, err := o.Exec.Run(ctx, o.Dir, nil, o.Out, crane, "push", layout, ref)
+		out, err := pushWithRetry(ctx, o, crane, layout, ref)
 		if err != nil {
 			return fail("crane push: %v", err)
 		}

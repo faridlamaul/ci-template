@@ -49,6 +49,7 @@ type Options struct {
 	Exec       Exec
 	Getenv     func(string) string
 	Out        io.Writer
+	Sleep      func(time.Duration) // waits between image push attempts; nil = time.Sleep
 }
 
 // StepResult is the outcome of one step.

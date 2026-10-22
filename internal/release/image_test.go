@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/faridlamaul/shipguard/internal/finding"
 	"github.com/faridlamaul/shipguard/internal/policy"
@@ -25,8 +26,9 @@ type imgExec struct {
 	digestErr   string // text of the crane digest failure; default MANIFEST_UNKNOWN
 	layouts     []string
 	pushOut     string
-	layoutIndex string // contents of the layout's top index blob; "" = a single manifest, no blob
-	pubManifest string // output of crane manifest; "" = the command fails
+	layoutIndex string   // contents of the layout's top index blob; "" = a single manifest, no blob
+	pubManifest string   // output of crane manifest; "" = the command fails
+	pushErrs    []string // errors for the first crane push calls; later pushes succeed
 }
 
 func (f *imgExec) Run(_ context.Context, _ string, env []string, _ io.Writer, name string, args ...string) ([]byte, error) {
@@ -69,6 +71,11 @@ func (f *imgExec) Run(_ context.Context, _ string, env []string, _ io.Writer, na
 			}
 			return []byte(f.pubManifest), nil
 		case "push":
+			if len(f.pushErrs) > 0 {
+				msg := f.pushErrs[0]
+				f.pushErrs = f.pushErrs[1:]
+				return nil, errors.New(msg)
+			}
 			return []byte(f.pushOut), nil
 		}
 	}
@@ -414,7 +421,7 @@ func TestImageTempLayoutRemoved(t *testing.T) {
 		{trivyOut: cleanTrivy(), pushOut: "x@" + fakeLayoutDigest},
 		{trivyOut: cleanTrivy(), pushOut: "nodigest"},
 	} {
-		runImage(t, imgOpts(t, f), "1.4.0")
+		_, _, _ = runImage(t, imgOpts(t, f), "1.4.0")
 		if len(f.layouts) != 1 {
 			t.Fatalf("layouts = %v", f.layouts)
 		}
@@ -429,7 +436,7 @@ func TestImageTrivyNotLogged(t *testing.T) {
 	o := imgOpts(t, f)
 	var buf strings.Builder
 	o.Out = &buf
-	runImage(t, o, "1.4.0")
+	_, _, _ = runImage(t, o, "1.4.0")
 	if strings.Contains(buf.String(), "SENTINEL") || !strings.Contains(buf.String(), "trivy linux/amd64: 0 vulnerabilities") {
 		t.Fatalf("out = %q", buf.String())
 	}
@@ -562,5 +569,46 @@ func TestImageRerunManifestErrorInReason(t *testing.T) {
 	_, s, _ := runImage(t, imgOpts(t, f), "1.4.0")
 	if s.Status != "failed" || !strings.Contains(s.Reason, "cannot be read") || !strings.Contains(s.Reason, "manifest unavailable") {
 		t.Fatalf("s=%+v", s)
+	}
+}
+
+func TestImagePushRetriesThenSucceeds(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy(), pushOut: "x@" + fakeLayoutDigest, pushErrs: []string{"DENIED: requested access to the resource is denied"}}
+	o := imgOpts(t, f)
+	var slept []time.Duration
+	o.Sleep = func(d time.Duration) { slept = append(slept, d) }
+	var out strings.Builder
+	o.Out = &out
+	_, s, _ := runImage(t, o, "1.4.0")
+	if s.Status != "passed" || len(f.all("cosign")) != 1 || len(f.all("crane")) != 1+2+3 {
+		t.Fatalf("s=%+v calls=%v", s, f.names())
+	}
+	if len(slept) != 1 || slept[0] != 5*time.Second {
+		t.Fatalf("slept = %v", slept)
+	}
+	if !strings.Contains(out.String(), "DENIED") {
+		t.Fatalf("no retry line in %q", out.String())
+	}
+}
+
+func TestImagePushFailsAfterThreeAttempts(t *testing.T) {
+	f := &imgExec{trivyOut: cleanTrivy(), pushErrs: []string{"e1", "e2", "e3"}}
+	o := imgOpts(t, f)
+	var slept []time.Duration
+	o.Sleep = func(d time.Duration) { slept = append(slept, d) }
+	_, s, _ := runImage(t, o, "1.4.0")
+	if s.Status != "failed" || !strings.Contains(s.Reason, "e3") || len(f.all("cosign")) != 0 {
+		t.Fatalf("s=%+v", s)
+	}
+	for _, c := range f.all("crane") {
+		if c.args[0] == "tag" {
+			t.Fatalf("unexpected tag: %v", f.names())
+		}
+	}
+	if len(slept) != 2 || slept[0] != 5*time.Second || slept[1] != 15*time.Second {
+		t.Fatalf("slept = %v", slept)
+	}
+	if n := len(f.all("crane")); n != 4 { // digest + 3 pushes
+		t.Fatalf("crane calls = %d", n)
 	}
 }
