@@ -145,6 +145,10 @@ A release from `release-artifacts.yml`: the version, the binaries and the signed
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
+## Ownership
+
+Maintainer: af/faridlamaul · Repository: <https://github.com/faridlamaul/shipguard> · Issues: <https://github.com/faridlamaul/shipguard/issues>
+
 ---
 
 ## Legacy workflows
